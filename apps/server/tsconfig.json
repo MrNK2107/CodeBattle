@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "module": "commonjs",
+    "target": "ES2021",
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*"]
+}

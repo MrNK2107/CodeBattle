@@ -1,0 +1,41 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: codebattle
+      POSTGRES_USER: codebattle
+      POSTGRES_PASSWORD: codebattle
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  judge0-server:
+    image: judge0/judge0:1.13.0
+    ports:
+      - "2358:2358"
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://codebattle:codebattle@postgres:5432/judge0
+    depends_on:
+      - postgres
+      - redis
+
+  judge0-worker:
+    image: judge0/judge0:1.13.0
+    command: ["./scripts/run-workers"]
+    privileged: true
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://codebattle:codebattle@postgres:5432/judge0
+    depends_on:
+      - judge0-server
+
+volumes:
+  postgres_data:

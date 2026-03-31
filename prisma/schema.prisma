@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum MatchStatus {
+  WAITING
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum SubmissionStatus {
+  PENDING
+  ACCEPTED
+  WRONG_ANSWER
+  TIME_LIMIT
+  RUNTIME_ERROR
+  COMPILE_ERROR
+}
+
+model User {
+  id             String          @id @default(cuid())
+  email          String          @unique
+  username       String          @unique
+  passwordHash   String?
+  avatarUrl      String?
+  githubId       String?         @unique
+  googleId       String?         @unique
+  rating         Int             @default(1200)
+  totalMatches   Int             @default(0)
+  wins           Int             @default(0)
+  losses         Int             @default(0)
+  role           String          @default("USER")
+  createdAt      DateTime        @default(now())
+  matches        MatchPlayer[]
+  submissions    Submission[]
+  typingProfiles TypingProfile[]
+}
+
+model Question {
+  id              String    @id @default(cuid())
+  title           String
+  slug            String    @unique
+  description     String
+  difficulty      Difficulty
+  tags            String[]
+  starterCode     Json
+  testCases       TestCase[]
+  hiddenTestCases TestCase[]
+  optimalBigO     String
+  optimalSpace    String
+  matches         Match[]
+  createdAt       DateTime  @default(now())
+}
+
+model TestCase {
+  id          String   @id @default(cuid())
+  questionId  String
+  question    Question @relation(fields: [questionId], references: [id])
+  input       String
+  expected    String
+  isHidden    Boolean  @default(false)
+}
+
+model Match {
+  id          String        @id @default(cuid())
+  questionId  String
+  question    Question      @relation(fields: [questionId], references: [id])
+  status      MatchStatus   @default(WAITING)
+  startedAt   DateTime?
+  endedAt     DateTime?
+  winnerId    String?
+  createdAt   DateTime      @default(now())
+  players     MatchPlayer[]
+  submissions Submission[]
+}
+
+model MatchPlayer {
+  id             String   @id @default(cuid())
+  matchId        String
+  userId         String
+  match          Match    @relation(fields: [matchId], references: [id])
+  user           User     @relation(fields: [userId], references: [id])
+  finalScore     Float?
+  scoreBreakdown Json?
+  isReady        Boolean  @default(false)
+}
+
+model Submission {
+  id          String    @id @default(cuid())
+  matchId     String
+  userId      String
+  match       Match     @relation(fields: [matchId], references: [id])
+  user        User      @relation(fields: [userId], references: [id])
+  code        String
+  language    String
+  status      SubmissionStatus
+  passedTests Int       @default(0)
+  totalTests  Int
+  runtimeMs   Int?
+  memoryKb    Int?
+  submittedAt DateTime  @default(now())
+}
+
+model TypingProfile {
+  id              String   @id @default(cuid())
+  userId          String
+  matchId         String
+  user            User     @relation(fields: [userId], references: [id])
+  avgWpm          Float
+  wpmVariance     Float
+  backspaceRate   Float
+  avgPauseMs      Float
+  burstCount      Int
+  keystrokeEvents Json
+  createdAt       DateTime @default(now())
+}

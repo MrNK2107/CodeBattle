@@ -1,0 +1,21 @@
+{
+  "name": "codebattle",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@10.5.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "format": "turbo run format"
+  },
+  "devDependencies": {
+    "turbo": "1.13.3",
+    "typescript": "5.4.5"
+  }
+}
