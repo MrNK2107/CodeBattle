@@ -12,9 +12,17 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "format": "turbo run format"
+    "format": "turbo run format",
+    "prisma:generate": "prisma generate",
+    "prisma:db:push": "prisma db push",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:format": "prisma format"
+  },
+  "dependencies": {
+    "@prisma/client": "5.14.0"
   },
   "devDependencies": {
+    "prisma": "5.14.0",
     "turbo": "1.13.3",
     "typescript": "5.4.5"
   }

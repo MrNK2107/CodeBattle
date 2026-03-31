@@ -9,6 +9,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@prisma/client": "5.14.0",
     "@codebattle/shared": "workspace:*",
     "axios": "1.6.8",
     "bull": "4.12.2",

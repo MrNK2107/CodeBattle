@@ -1,27 +1,9 @@
 import { PrismaClient, Difficulty } from '@prisma/client';
+import { SeedQuestionInput, buildQuestionCreateData } from './seed-helpers';
 
 const prisma = new PrismaClient();
 
-type StarterCode = {
-  python: string;
-  javascript: string;
-  java: string;
-};
-
-type SeedQuestion = {
-  title: string;
-  slug: string;
-  description: string;
-  difficulty: Difficulty;
-  tags: string[];
-  starterCode: StarterCode;
-  visibleTests: { input: string; expected: string }[];
-  hiddenTests: { input: string; expected: string }[];
-  optimalBigO: string;
-  optimalSpace: string;
-};
-
-const sampleQuestions: SeedQuestion[] = [
+const sampleQuestions: SeedQuestionInput[] = [
   {
     title: 'Two Sum',
     slug: 'two-sum',
@@ -52,34 +34,7 @@ async function main(): Promise<void> {
     const created = await prisma.question.upsert({
       where: { slug: question.slug },
       update: {},
-      create: {
-        title: question.title,
-        slug: question.slug,
-        description: question.description,
-        difficulty: question.difficulty,
-        tags: question.tags,
-        starterCode: question.starterCode,
-        optimalBigO: question.optimalBigO,
-        optimalSpace: question.optimalSpace,
-        testCases: {
-          createMany: {
-            data: question.visibleTests.map(tc => ({
-              input: tc.input,
-              expected: tc.expected,
-              isHidden: false
-            }))
-          }
-        },
-        hiddenTestCases: {
-          createMany: {
-            data: question.hiddenTests.map(tc => ({
-              input: tc.input,
-              expected: tc.expected,
-              isHidden: true
-            }))
-          }
-        }
-      }
+      create: buildQuestionCreateData(question)
     });
     console.log(`Seeded question ${created.slug}`);
   }
