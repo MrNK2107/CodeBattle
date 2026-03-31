@@ -7,6 +7,7 @@ import { BattleClientToServerEvents, BattleServerToClientEvents } from '@codebat
 import { registerBattleHandlers } from './socket/battle';
 import { registerMatchmakingHandlers } from './socket/matchmaking';
 import { registerWebRtcHandlers } from './socket/webrtc';
+import { prisma } from './prisma';
 
 dotenv.config();
 
@@ -16,6 +17,47 @@ app.use(express.json());
 
 app.get('/health', (_, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/questions', async (req, res) => {
+  const { difficulty } = req.query;
+
+  const questions = await prisma.question.findMany({
+    where: difficulty ? { difficulty: String(difficulty).toUpperCase() as any } : undefined,
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      difficulty: true,
+      tags: true,
+      optimalBigO: true,
+      optimalSpace: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  res.json(questions);
+});
+
+app.get('/questions/:slug', async (req, res) => {
+  const { slug } = req.params;
+
+  const question = await prisma.question.findUnique({
+    where: { slug },
+    include: {
+      testCases: {
+        where: { isHidden: false },
+        orderBy: { id: 'asc' },
+      },
+    },
+  });
+
+  if (!question) {
+    res.status(404).json({ error: 'Question not found' });
+    return;
+  }
+
+  res.json(question);
 });
 
 const server = http.createServer(app);

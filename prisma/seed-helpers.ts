@@ -27,12 +27,10 @@ export function buildQuestionCreateData(input: SeedQuestionInput) {
     optimalSpace: input.optimalSpace,
     testCases: {
       createMany: {
-        data: input.visibleTests.map(tc => ({ input: tc.input, expected: tc.expected, isHidden: false }))
-      }
-    },
-    hiddenTestCases: {
-      createMany: {
-        data: input.hiddenTests.map(tc => ({ input: tc.input, expected: tc.expected, isHidden: true }))
+        data: [
+          ...input.visibleTests.map(tc => ({ input: tc.input, expected: tc.expected, isHidden: false })),
+          ...input.hiddenTests.map(tc => ({ input: tc.input, expected: tc.expected, isHidden: true }))
+        ]
       }
     }
   };

@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@prisma/client": "5.14.0",
-    "@codebattle/shared": "workspace:*",
+    "@codebattle/shared": "file:../../packages/shared",
+    "prisma": "5.14.0",
     "axios": "1.6.8",
     "bull": "4.12.2",
     "cors": "2.8.5",
