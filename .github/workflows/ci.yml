@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Tests use in-memory Redis (set in vitest config) and an in-memory Prisma
+      # stand-in, so no Postgres, Redis, Docker or Judge0 service is needed.
+      # Docker and real-Redis suites skip unless DOCKER_TESTS / REDIS_TEST_URL are set.
+      NEXT_TELEMETRY_DISABLED: '1'
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx turbo run typecheck
+
+      - name: Lint (web)
+        run: npm run lint -w @codebattle/web
+
+      - name: Test (shared)
+        run: npm test -w @codebattle/shared
+
+      - name: Test (problems)
+        run: npm test -w @codebattle/problems
+
+      - name: Test (web)
+        run: npm test -w @codebattle/web
+
+      # The C++ harness and full question-bank harness suites (cpp-harness, bank-harness) compile every
+      # starter stub with g++/javac (minutes of work, WSL-backed locally); they
+      # are excluded here the same way the local runs exclude them.
+      - name: Test (server)
+        run: npm test -w @codebattle/server -- --exclude 'src/__tests__/*-harness.test.ts'

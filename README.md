@@ -1,5 +1,7 @@
 # CodeBattle
 
+[![CI](https://github.com/MrNK2107/CodeBattle/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MrNK2107/CodeBattle/actions/workflows/ci.yml)
+
 **Fight night for code.** Live 1v1 coding battles for students preparing for placements and the coding clubs that train them. Two players near the same rating get the same problem and the same clock. Hidden tests decide who got it right; speed, efficiency, typing and code quality decide who got it right *better*. Both ratings move, and so does your college.
 
 ![Landing](docs/screenshots/landing.png)
