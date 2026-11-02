@@ -63,6 +63,7 @@ vi.mock('../services/match', () => ({ handleJudgedSubmission }));
 
 const { processSubmission, submissionQueue } = await import('../queues/submission');
 const { setRunner } = await import('../services/runners');
+const { liveStateOf, forgetLiveState } = await import('../socket/spectate');
 
 const emitted: Array<{ room: string; except?: string; event: string; payload: any }> = [];
 const namespace = {
@@ -107,6 +108,24 @@ describe('processSubmission', () => {
     await processSubmission(namespace, { submissionId: 's1' });
     expect(db.submissions.get('s1')).toMatchObject({ status: 'ACCEPTED', passedTests: 2 });
     expect(handleJudgedSubmission).toHaveBeenCalledWith('m1', 'alice', true, namespace);
+  });
+
+  it('a result for a match that already ended does not re-create spectator live state', async () => {
+    forgetLiveState('m1');
+    db.matchStatus = 'COMPLETED';
+    pending();
+    setRunner(scriptedRunner([2, 4]));
+    await processSubmission(namespace, { submissionId: 's1' });
+    expect(liveStateOf('m1', 'alice')).toBeUndefined();
+  });
+
+  it('a result for an active match is remembered for late spectators', async () => {
+    forgetLiveState('m1');
+    pending();
+    setRunner(scriptedRunner([2, 4]));
+    await processSubmission(namespace, { submissionId: 's1' });
+    expect(liveStateOf('m1', 'alice')).toMatchObject({ status: 'submitted' });
+    forgetLiveState('m1');
   });
 
   it('shows the failing hidden test only to the player who submitted', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { countLines, ghostStateAt, parseFrames, raceOutcome, rankGhosts } from './ghost';
+import { countLines, ghostFramesForViewer, ghostStateAt, parseFrames, raceOutcome, rankGhosts } from './ghost';
 
 const frames = parseFrames([
   { t: 20_000, code: 'def two_sum(nums, target):\n    seen = {}\n', language: 'python' },
@@ -93,5 +93,35 @@ describe('rankGhosts', () => {
 
   it('counts non-blank lines', () => {
     expect(countLines('a\n\n  \nb\n')).toBe(2);
+  });
+});
+
+describe('ghostFramesForViewer', () => {
+  const raw = [
+    { t: 5_000, code: 'def two_sum(nums, target):\n', language: 'python' },
+    { t: 60_000, code: 'def two_sum(nums, target):\n    seen = {}\n    return []\n', language: 'python', submitted: true },
+  ];
+
+  it('sends only the timeline, never code, until the viewer has solved the problem', () => {
+    const locked = ghostFramesForViewer(raw, false);
+    expect(locked).toHaveLength(2);
+    for (const f of locked) expect(f).not.toHaveProperty('code');
+    expect(JSON.stringify(locked)).not.toContain('two_sum');
+    expect(locked[1]).toMatchObject({ t: 60_000, lines: 3, language: 'python', submitted: true });
+  });
+
+  it('includes the code once the viewer has an accepted attempt', () => {
+    const open = ghostFramesForViewer(raw, true);
+    expect(open[1].code).toContain('return []');
+  });
+
+  it('a code-free timeline races exactly like the full recording', () => {
+    const full = { frames: ghostFramesForViewer(raw, true), submitAtMs: 61_000 };
+    const bare = { frames: ghostFramesForViewer(raw, false), submitAtMs: 61_000 };
+    for (const t of [0, 6_000, 30_000, 60_500, 61_000]) {
+      const a = ghostStateAt(full, t);
+      const b = ghostStateAt(bare, t);
+      expect(b).toEqual({ ...a, code: '' });
+    }
   });
 });

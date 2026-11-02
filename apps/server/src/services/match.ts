@@ -203,34 +203,21 @@ export async function finalizeMatchIfReady(
 
   const scores = computeMatchScores(performances, matchDurationSeconds(match.question.difficulty));
   const winnerId = determineWinner(scores);
-  const ratingChanges = match.mode === 'RANKED' && match.players.length === 2
-    ? computeRatingChanges(
-        { userId: match.players[0].userId, rating: match.players[0].user.rating },
-        { userId: match.players[1].userId, rating: match.players[1].user.rating },
-        winnerId
-      )
-    : [];
-
-  const replays = new Map<string, unknown[]>();
-  for (const player of match.players) {
-    const frames: unknown[] = await readSnapshots(match.id, player.userId);
-    const submission = submissionOf(player.userId);
-    if (submission) {
-      frames.push({ t: submission.submittedAt.getTime() - startedAt.getTime(), code: submission.code, language: submission.language, submitted: true });
-    }
-    replays.set(player.userId, frames);
-  }
+  const replays = await collectReplays(match.id, match.players, match.submissions, startedAt);
 
   const finalized = await prisma.$transaction(async tx => {
     const claimed = await tx.match.updateMany({
       where: { id: match.id, status: 'ACTIVE' },
       data: { status: 'COMPLETED', winnerId: winnerId ?? null, endedAt, endReason: options.force ? 'timeout' : 'completed' },
     });
-    if (claimed.count === 0) return false;
+    if (claimed.count === 0) return null;
 
+    const ratings = await lockRatings(tx, match.players.map(p => p.userId));
+    const ratingOf = (userId: string) => ratings.get(userId) ?? match.players.find(p => p.userId === userId)!.user.rating;
+    const changes = rankedChanges(match.mode, match.players.map(p => ({ userId: p.userId, rating: ratingOf(p.userId) })), winnerId);
     for (const score of scores) {
-      const change = ratingChanges.find(c => c.userId === score.userId);
-      const rating = match.players.find(p => p.userId === score.userId)!.user.rating;
+      const change = changes.find(c => c.userId === score.userId);
+      const rating = ratingOf(score.userId);
       await tx.matchPlayer.update({
         where: { matchId_userId: { matchId: match.id, userId: score.userId } },
         data: {
@@ -241,27 +228,13 @@ export async function finalizeMatchIfReady(
           replay: (replays.get(score.userId) ?? []) as Prisma.InputJsonArray,
         },
       });
-      const t = telemetry.get(score.userId);
-      if (t && t.events.length) {
-        const profile = {
-          avgWpm: t.metrics.wpm,
-          wpmVariance: t.metrics.variation,
-          backspaceRate: t.metrics.backspaceRate,
-          avgPauseMs: t.metrics.avgPauseMs,
-          burstCount: t.metrics.burstCount,
-          keystrokeEvents: t.events as Prisma.InputJsonArray,
-        };
-        await tx.typingProfile.upsert({
-          where: { userId_matchId: { userId: score.userId, matchId: match.id } },
-          update: profile,
-          create: { userId: score.userId, matchId: match.id, ...profile },
-        });
-      }
     }
-    await applyRatings(tx, ratingChanges);
-    return true;
+    await saveTypingProfiles(tx, match.id, telemetry);
+    await applyRatings(tx, changes);
+    return changes;
   });
   if (!finalized) return;
+  const ratingChanges = finalized;
 
   clearTimers(match.id);
   await Promise.all(match.players.map(p => clearMatchTelemetry(match.id, p.userId).catch(() => undefined)));
@@ -282,7 +255,10 @@ export async function finalizeMatchIfReady(
 export async function forfeitMatch(matchId: string, userId: string, namespace: BattleNamespace): Promise<'forfeited' | 'cancelled' | 'over'> {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
-    include: { players: { include: { user: { select: { rating: true } } } } },
+    include: {
+      players: { include: { user: { select: { rating: true } } } },
+      submissions: { select: { userId: true, code: true, language: true, submittedAt: true } },
+    },
   });
   if (!match || match.status === 'COMPLETED' || match.status === 'ABANDONED') return 'over';
   if (match.status === 'WAITING') return (await cancelMatch(matchId, namespace, 'cancelled')) ? 'cancelled' : 'over';
@@ -290,28 +266,40 @@ export async function forfeitMatch(matchId: string, userId: string, namespace: B
   const opponent = match.players.find(p => p.userId !== userId);
   const winnerId = opponent?.userId;
   const self = match.players.find(p => p.userId === userId);
-  const ratingChanges =
-    match.mode === 'RANKED' && self && opponent
-      ? computeRatingChanges({ userId: self.userId, rating: self.user.rating }, { userId: opponent.userId, rating: opponent.user.rating }, winnerId)
-      : [];
 
-  const done = await prisma.$transaction(async tx => {
+  // keep the replay and typing profiles, exactly as a finished battle does
+  const startedAt = match.startedAt ?? match.createdAt;
+  const replays = await collectReplays(matchId, match.players, match.submissions, startedAt);
+  const telemetry = await collectTelemetry(matchId, match.players);
+
+  const ratingChanges = await prisma.$transaction(async tx => {
     const claimed = await tx.match.updateMany({
       where: { id: matchId, status: 'ACTIVE' },
       data: { status: 'COMPLETED', winnerId: winnerId ?? null, endedAt: new Date(), endReason: 'forfeit' },
     });
-    if (claimed.count === 0) return false;
+    if (claimed.count === 0) return null;
+    const ratings = await lockRatings(tx, match.players.map(p => p.userId));
+    const ratingOf = (p: { userId: string; user: { rating: number } }) => ratings.get(p.userId) ?? p.user.rating;
+    const changes =
+      self && opponent
+        ? rankedChanges(match.mode, [{ userId: self.userId, rating: ratingOf(self) }, { userId: opponent.userId, rating: ratingOf(opponent) }], winnerId)
+        : [];
     for (const player of match.players) {
-      const change = ratingChanges.find(c => c.userId === player.userId);
+      const change = changes.find(c => c.userId === player.userId);
       await tx.matchPlayer.update({
         where: { id: player.id },
-        data: { ratingBefore: player.user.rating, ratingAfter: change?.newRating ?? player.user.rating },
+        data: {
+          ratingBefore: ratingOf(player),
+          ratingAfter: change?.newRating ?? ratingOf(player),
+          replay: (replays.get(player.userId) ?? []) as Prisma.InputJsonArray,
+        },
       });
     }
-    await applyRatings(tx, ratingChanges);
-    return true;
+    await saveTypingProfiles(tx, matchId, telemetry);
+    await applyRatings(tx, changes);
+    return changes;
   });
-  if (!done) return 'over';
+  if (!ratingChanges) return 'over';
 
   clearTimers(matchId);
   await Promise.all(match.players.map(p => clearMatchTelemetry(matchId, p.userId).catch(() => undefined)));
@@ -335,6 +323,72 @@ export async function forfeitMatch(matchId: string, userId: string, namespace: B
     reason: 'forfeit',
   });
   return 'forfeited';
+}
+
+type Telemetry = Map<string, { metrics: ReturnType<typeof computeTypingMetrics>; events: unknown[] }>;
+
+/** Each player's recorded snapshots plus their final submission, for MatchPlayer.replay. */
+async function collectReplays(
+  matchId: string,
+  players: ReadonlyArray<{ userId: string }>,
+  submissions: ReadonlyArray<{ userId: string; code: string; language: string; submittedAt: Date }>,
+  startedAt: Date,
+): Promise<Map<string, unknown[]>> {
+  const replays = new Map<string, unknown[]>();
+  for (const player of players) {
+    const frames: unknown[] = await readSnapshots(matchId, player.userId);
+    const submission = submissions.find(s => s.userId === player.userId);
+    if (submission) {
+      frames.push({ t: submission.submittedAt.getTime() - startedAt.getTime(), code: submission.code, language: submission.language, submitted: true });
+    }
+    replays.set(player.userId, frames);
+  }
+  return replays;
+}
+
+async function collectTelemetry(matchId: string, players: ReadonlyArray<{ userId: string }>): Promise<Telemetry> {
+  const telemetry: Telemetry = new Map();
+  for (const player of players) {
+    const { events } = await readTyping(matchId, player.userId);
+    telemetry.set(player.userId, { metrics: computeTypingMetrics(events), events });
+  }
+  return telemetry;
+}
+
+async function saveTypingProfiles(tx: Prisma.TransactionClient, matchId: string, telemetry: Telemetry): Promise<void> {
+  for (const [userId, t] of telemetry) {
+    if (!t.events.length) continue;
+    const profile = {
+      avgWpm: t.metrics.wpm,
+      wpmVariance: t.metrics.variation,
+      backspaceRate: t.metrics.backspaceRate,
+      avgPauseMs: t.metrics.avgPauseMs,
+      burstCount: t.metrics.burstCount,
+      keystrokeEvents: t.events as Prisma.InputJsonArray,
+    };
+    await tx.typingProfile.upsert({
+      where: { userId_matchId: { userId, matchId } },
+      update: profile,
+      create: { userId, matchId, ...profile },
+    });
+  }
+}
+
+/**
+ * Current ratings, row-locked until the transaction ends. Two battles finishing
+ * at once for the same player then rate one after the other, each from the
+ * rating the other left, instead of both from a stale copy read earlier.
+ */
+async function lockRatings(tx: Prisma.TransactionClient, userIds: string[]): Promise<Map<string, number>> {
+  if (!userIds.length) return new Map();
+  const rows = await tx.$queryRaw<Array<{ id: string; rating: number }>>`
+    SELECT "id", "rating" FROM "User" WHERE "id" = ANY(${userIds}::text[]) FOR UPDATE`;
+  return new Map(rows.map(r => [r.id, Number(r.rating)]));
+}
+
+function rankedChanges(mode: string, players: Array<{ userId: string; rating: number }>, winnerId: string | null | undefined): RatingChange[] {
+  if (mode !== 'RANKED' || players.length !== 2) return [];
+  return computeRatingChanges(players[0], players[1], winnerId ?? undefined);
 }
 
 async function applyRatings(tx: Prisma.TransactionClient, changes: RatingChange[]): Promise<void> {

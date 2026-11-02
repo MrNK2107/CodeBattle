@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { ReplayViewer, type ReplayFrame } from '@/components/replay/ReplayViewer';
 import { auth } from '@/lib/auth';
+import { canSeeBattleCode, replayFramesFor } from '@/lib/battleAccess';
 import { VERDICT_LABEL } from '@/lib/format';
 import { prisma } from '@/lib/prisma';
 
@@ -34,6 +35,9 @@ export default async function ReplayPage({ params }: { params: { matchId: string
   // replays reveal both solutions, so only finished battles have one
   if (match.status !== 'COMPLETED') redirect(`/battle/${match.id}`);
 
+  // Only the two players see code; everyone else gets the verdict timeline.
+  // Enforced here, so the frames sent to the browser carry no code at all.
+  const codeVisible = canSeeBattleCode(match.players, viewerId);
   const players = [...match.players].sort((a, b) => (a.userId === viewerId ? -1 : b.userId === viewerId ? 1 : 0));
   const start = match.startedAt ?? match.createdAt;
   const durationMs = (match.endedAt ?? new Date()).getTime() - start.getTime();
@@ -42,7 +46,7 @@ export default async function ReplayPage({ params }: { params: { matchId: string
     const judged = sub && sub.status !== 'PENDING';
     return {
       name: p.user.username,
-      frames: (Array.isArray(p.replay) ? p.replay : []) as unknown as ReplayFrame[],
+      frames: replayFramesFor(p.replay, codeVisible),
       verdict: judged ? `${VERDICT_LABEL[sub.status]} ${sub.passedTests}/${sub.totalTests}` : null,
       submitAt: judged ? Math.max(0, sub.submittedAt.getTime() - start.getTime()) : null,
       accepted: sub?.status === 'ACCEPTED',
@@ -67,7 +71,7 @@ export default async function ReplayPage({ params }: { params: { matchId: string
       {empty || tracks.length < 2 ? (
         <p className="panel p-6 text-muted">No code was recorded for this battle.</p>
       ) : (
-        <ReplayViewer tracks={tracks} durationMs={durationMs} />
+        <ReplayViewer tracks={tracks} durationMs={durationMs} codeVisible={codeVisible} />
       )}
     </div>
   );

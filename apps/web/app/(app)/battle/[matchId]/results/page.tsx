@@ -5,6 +5,7 @@ import { notFound, redirect } from 'next/navigation';
 import { TierBadge } from '@/components/ladder/TierBadge';
 import RadarChart from '@/components/scoring/RadarChart';
 import { auth } from '@/lib/auth';
+import { canSeeBattleCode } from '@/lib/battleAccess';
 import { DIFFICULTY_LABEL, DIFFICULTY_TEXT, VERDICT_LABEL, formatMs, signed } from '@/lib/format';
 import { ladderMove, standingFor } from '@/lib/ladder';
 import { prisma } from '@/lib/prisma';
@@ -35,6 +36,8 @@ export default async function ResultsPage({ params }: { params: { matchId: strin
       submissions: true,
     },
   });
+  // Submitted code is shown only to the two players (the question stays in the ranked pool).
+  const codeVisible = match ? canSeeBattleCode(match.players, viewerId) : false;
   if (!match) notFound();
   if (match.status === 'WAITING' || match.status === 'ACTIVE') redirect(`/battle/${match.id}`);
 
@@ -189,7 +192,7 @@ export default async function ResultsPage({ params }: { params: { matchId: strin
                     : 'No submission'}
                 </p>
               </div>
-              {sub ? (
+              {sub && codeVisible ? (
                 <details>
                   <summary className="cursor-pointer px-4 py-2 text-sm text-muted hover:text-text">Show code ({sub.language})</summary>
                   <pre className="max-h-96 overflow-auto bg-well px-4 py-3 font-mono text-[13px] leading-relaxed">{sub.code}</pre>

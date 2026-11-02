@@ -104,12 +104,16 @@ export function GhostRace({ slug, ghost, others, startedAt, solvedAtMs, onStart,
                 ? `Solved. ${ghost.username} never got this one accepted in their battle.`
                 : `${ghost.username}'s ghost solved it first. Keep going, the clock is still yours.`}
           </p>
-          <button type="button" className="text-xs text-muted underline-offset-4 hover:text-text hover:underline" onClick={() => setPeek(p => !p)}>
-            {peek ? 'Hide ghost code' : 'Show ghost code'}
-          </button>
+          {ghost.codeUnlocked ? (
+            <button type="button" className="text-xs text-muted underline-offset-4 hover:text-text hover:underline" onClick={() => setPeek(p => !p)}>
+              {peek ? 'Hide ghost code' : 'Show ghost code'}
+            </button>
+          ) : (
+            <span className="text-xs text-faint">{solvedAtMs !== null ? 'Unlocking ghost code…' : 'Solve it to unlock the ghost code.'}</span>
+          )}
         </div>
       ) : null}
-      {over && peek ? (
+      {over && peek && ghost.codeUnlocked ? (
         <pre className="max-h-72 overflow-auto border-t border-line bg-well px-4 py-3 font-mono text-[12.5px] leading-relaxed text-muted">
           {state.code || ghost.frames[ghost.frames.length - 1]?.code}
         </pre>

@@ -2,9 +2,8 @@ import Link from 'next/link';
 
 import { TierBadge } from '@/components/ladder/TierBadge';
 import { auth } from '@/lib/auth';
-import { COLLEGE_MIN_PLAYERS, COLLEGE_TOP_N, rankColleges } from '@/lib/colleges';
-import { tierDistribution } from '@/lib/ladder';
-import { prisma } from '@/lib/prisma';
+import { COLLEGE_MIN_PLAYERS, COLLEGE_TOP_N, parseCollegeSlug } from '@/lib/colleges';
+import { loadCollegeRows, loadTierCounts, loadTopPlayers } from '@/lib/leaderboardData';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Leaderboard' };
@@ -15,13 +14,10 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
   const session = await auth().catch(() => null);
   const viewerId = session?.user?.id;
   const view: View = searchParams.view === 'colleges' ? 'colleges' : 'players';
-  const collegeFilter = typeof searchParams.college === 'string' && searchParams.college ? searchParams.college.slice(0, 80) : null;
+  // ?college= goes through the same normaliser as stored slugs (null for junk or look-alikes)
+  const collegeFilter = parseCollegeSlug(typeof searchParams.college === 'string' ? searchParams.college : null);
 
-  const ranked = await prisma.user.findMany({
-    where: { totalMatches: { gt: 0 } },
-    select: { rating: true, college: true, collegeSlug: true, username: true, wins: true, totalMatches: true },
-  });
-  const distribution = tierDistribution(ranked.map(u => u.rating));
+  const { total: rankedCount, distribution } = await loadTierCounts();
 
   return (
     <div className="mx-auto max-w-5xl space-y-8">
@@ -30,7 +26,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
           <p className="kicker">Ranked ladder</p>
           <h1 className="text-4xl font-bold">Leaderboard</h1>
           <p className="text-muted">
-            {ranked.length} ranked {ranked.length === 1 ? 'player' : 'players'}. One ranked battle puts you on the ladder.
+            {rankedCount} ranked {rankedCount === 1 ? 'player' : 'players'}. One ranked battle puts you on the ladder.
           </p>
         </div>
         <nav className="segmented" aria-label="Leaderboard view">
@@ -43,7 +39,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
         </nav>
       </header>
 
-      {ranked.length ? (
+      {rankedCount ? (
         <section aria-label="Players per tier" className="space-y-2">
           <div className="flex h-3 overflow-hidden rounded-full bg-raised">
             {distribution
@@ -63,7 +59,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
         </section>
       ) : null}
 
-      {view === 'colleges' ? <Colleges members={ranked} /> : <Players viewerId={viewerId} collegeFilter={collegeFilter} />}
+      {view === 'colleges' ? <Colleges /> : <Players viewerId={viewerId} collegeFilter={collegeFilter} />}
     </div>
   );
 }
@@ -73,12 +69,7 @@ function tabClass(active: boolean): string {
 }
 
 async function Players({ viewerId, collegeFilter }: { viewerId?: string; collegeFilter: string | null }): Promise<JSX.Element> {
-  const top = await prisma.user.findMany({
-    where: { totalMatches: { gt: 0 }, ...(collegeFilter ? { collegeSlug: collegeFilter } : {}) },
-    orderBy: [{ rating: 'desc' }, { wins: 'desc' }, { createdAt: 'asc' }],
-    take: 100,
-    select: { id: true, username: true, rating: true, wins: true, losses: true, totalMatches: true, college: true, collegeSlug: true },
-  });
+  const top = await loadTopPlayers(collegeFilter);
   const collegeName = collegeFilter ? (top[0]?.college ?? collegeFilter) : null;
 
   if (top.length === 0) {
@@ -138,7 +129,11 @@ async function Players({ viewerId, collegeFilter }: { viewerId?: string; college
                   </Link>
                   {u.id === viewerId ? <span className="ml-2 text-xs text-you">you</span> : null}
                   {u.college && u.collegeSlug ? (
-                    <Link href={`/leaderboard?college=${u.collegeSlug}`} className="block truncate text-xs text-faint hover:text-muted">
+                    <Link
+                      href={`/leaderboard?college=${u.collegeSlug}`}
+                      className="block truncate text-xs text-faint hover:text-muted"
+                      title="Self-declared by the player, not verified"
+                    >
                       {u.college}
                     </Link>
                   ) : null}
@@ -186,12 +181,8 @@ function Podium({ players }: { players: Array<{ id: string; username: string; ra
   );
 }
 
-function Colleges({
-  members,
-}: {
-  members: Array<{ rating: number; college: string | null; collegeSlug: string | null; username: string; wins: number; totalMatches: number }>;
-}): JSX.Element {
-  const rows = rankColleges(members);
+async function Colleges(): Promise<JSX.Element> {
+  const rows = await loadCollegeRows();
   const rankedRows = rows.filter(r => r.ranked);
   const forming = rows.filter(r => !r.ranked);
 
@@ -200,6 +191,7 @@ function Colleges({
       <p className="max-w-3xl text-sm text-muted">
         A college or club scores the average rating of its best {COLLEGE_TOP_N} ranked players, so bringing beginners never hurts and one star
         can&rsquo;t carry a team alone. Teams with at least {COLLEGE_MIN_PLAYERS} ranked players are ranked. Set yours on your profile.
+        Colleges are self-declared by players and not verified.
       </p>
       {rows.length === 0 ? (
         <p className="rounded-lg border border-dashed border-line p-6 text-muted">
@@ -242,6 +234,9 @@ function Colleges({
                       {r.name}
                     </Link>
                     {r.ranked ? null : <span className="ml-2 chip">forming</span>}
+                    <span className="ml-2 text-[11px] text-faint" title="Players type their own college; it is not verified">
+                      self-declared
+                    </span>
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <span className="font-display font-semibold tabular-nums">{r.score}</span>

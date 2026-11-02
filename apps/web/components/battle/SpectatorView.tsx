@@ -49,6 +49,8 @@ export function SpectatorView({ matchId }: { matchId: string }): JSX.Element {
           socket.off('match:cancelled', onCancelled);
           socket.off('error', onError);
           socket.off('connect', watch);
+          // leave the spectator room; the socket is shared and stays open
+          if (socket.connected) socket.emit('battle:unspectate', { matchId });
         };
       })
       .catch(() => setError('Sign in to watch battles.'));

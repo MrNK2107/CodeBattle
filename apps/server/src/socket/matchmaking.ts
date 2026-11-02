@@ -143,12 +143,24 @@ async function usersInOpenMatches(userIds: string[]): Promise<Set<string>> {
   return new Set(players.map(p => p.userId));
 }
 
-async function pickQuestion(userIds: string[], difficulty: Difficulty) {
-  const seen = await prisma.match.findMany({
-    where: { players: { some: { userId: { in: userIds } } } },
-    select: { questionId: true },
-  });
-  const seenIds = [...new Set(seen.map(s => s.questionId))];
+/**
+ * A random active question neither player has met: not one they battled on, and
+ * not one they solved in practice (solving unlocks the recorded ghost code, so
+ * they may have read another player's solution).
+ */
+export async function pickQuestion(userIds: string[], difficulty: Difficulty) {
+  const [battled, practised] = await Promise.all([
+    prisma.match.findMany({
+      where: { players: { some: { userId: { in: userIds } } } },
+      select: { questionId: true },
+    }),
+    prisma.practiceAttempt.findMany({
+      where: { userId: { in: userIds }, status: 'ACCEPTED' },
+      select: { questionId: true },
+      distinct: ['questionId'],
+    }),
+  ]);
+  const seenIds = [...new Set([...battled, ...practised].map(s => s.questionId))];
   let where: { difficulty: Difficulty; isActive: boolean; id?: { notIn: string[] } } = { difficulty, isActive: true, id: { notIn: seenIds } };
   let available = await prisma.question.count({ where });
   if (available === 0) {

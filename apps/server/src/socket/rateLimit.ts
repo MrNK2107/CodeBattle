@@ -4,7 +4,7 @@
  * Each event belongs to a class with its own token bucket:
  *   telemetry  battle:typing, battle:snapshot   (loose: the client sends ~0.7/s)
  *   action     battle:run, battle:submit        (strict: each one can mean judge work)
- *   control    battle:ready, battle:forfeit, battle:spectate
+ *   control    battle:ready, battle:forfeit, battle:spectate, battle:unspectate
  * An event needs a token from both its socket's bucket and its user's bucket
  * (shared across tabs), so the check runs before any DB read or judge work.
  */
@@ -37,6 +37,7 @@ export const BATTLE_EVENT_CLASSES: Record<string, EventClass> = {
   'battle:ready': 'control',
   'battle:forfeit': 'control',
   'battle:spectate': 'control',
+  'battle:unspectate': 'control',
 };
 
 const DEFAULT_SOCKET_LIMITS: Record<EventClass, BucketLimit> = {

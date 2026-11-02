@@ -51,6 +51,9 @@ interface SubmissionRow {
   submittedAt: Date;
 }
 
+const profiles: string[] = [];
+let beforeTx: (() => void | Promise<void>) | undefined;
+
 const db = {
   matches: new Map<string, MatchRow>(),
   players: [] as PlayerRow[],
@@ -92,7 +95,7 @@ const fakePrisma = {
       return p;
     },
   },
-  typingProfile: { upsert: async () => ({}) },
+  typingProfile: { upsert: async (args: { where: { userId_matchId: { userId: string } } }) => void profiles.push(args.where.userId_matchId.userId) },
   user: {
     async update({ where, data }: { where: { id: string }; data: Record<string, { increment: number }> }) {
       const u = db.users.get(where.id)!;
@@ -100,7 +103,13 @@ const fakePrisma = {
       return u;
     },
   },
+  // SELECT ... FOR UPDATE on the players' ratings inside the transaction
+  async $queryRaw(_strings: TemplateStringsArray, ...values: unknown[]) {
+    const ids = values.flat() as string[];
+    return ids.filter(id => db.users.has(id)).map(id => ({ id, rating: db.users.get(id)!.rating }));
+  },
   async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+    await beforeTx?.();
     return fn(fakePrisma);
   },
 };
@@ -108,6 +117,7 @@ const fakePrisma = {
 vi.mock('../prisma', () => ({ prisma: fakePrisma }));
 
 const match = await import('../services/match');
+const typing = await import('../services/typing');
 
 const scheduled: MatchTimerJob[] = [];
 const cancelled: string[] = [];
@@ -120,7 +130,10 @@ const scheduler: MatchTimerScheduler = {
 };
 
 const emitted: Array<{ room: string; event: string; payload: any }> = [];
-const namespace = { to: (room: string) => ({ emit: (event: string, payload: unknown) => void emitted.push({ room, event, payload }) }) } as unknown as BattleNamespace;
+const namespace = {
+  to: (room: string) => ({ emit: (event: string, payload: unknown) => void emitted.push({ room, event, payload }) }),
+  in: () => ({ socketsLeave: () => undefined }),
+} as unknown as BattleNamespace;
 // the players' room; spectators get their own copy in watch:<matchId>
 const events = (name: string) => emitted.filter(e => e.event === name && !e.room.startsWith('watch:'));
 const watched = (name: string) => emitted.filter(e => e.event === name && e.room.startsWith('watch:'));
@@ -169,6 +182,8 @@ function submit(userId: string, status: SubmissionRow['status'], minutesIn = 2, 
 }
 
 beforeEach(() => {
+  profiles.length = 0;
+  beforeTx = undefined;
   match.setMatchTimers(scheduler);
   scheduled.length = 0;
   cancelled.length = 0;
@@ -316,6 +331,42 @@ describe('forfeit', () => {
     expect(db.users.get('bob')!.rating).toBeLessThan(1200);
     expect(events('match:ended')).toHaveLength(1);
     expect(events('opponent:status')[0].payload).toEqual({ matchId: 'm1', status: 'forfeited' });
+  });
+
+  it('keeps both replays and typing profiles, like a finished battle', async () => {
+    seed('ACTIVE');
+    submit('alice', 'WRONG_ANSWER', 1, 1);
+    await typing.recordSnapshot('m1', 'alice', { t: 5_000, code: 'int a;', language: 'cpp' });
+    await typing.recordSnapshot('m1', 'bob', { t: 6_000, code: 'int b;', language: 'cpp' });
+    const now = Date.now();
+    await typing.recordTypingBatch('m1', 'bob', [{ t: now - 200, k: 'char' }, { t: now - 100, k: 'char' }], 0, now);
+    expect(await match.forfeitMatch('m1', 'bob', namespace)).toBe('forfeited');
+    const replay = (id: string) => db.players.find(p => p.userId === id)!.replay as Array<{ code: string; submitted?: boolean }>;
+    expect(replay('alice').map(f => f.code)).toEqual(['int a;', 'class Solution {}']);
+    expect(replay('alice')[1].submitted).toBe(true);
+    expect(replay('bob').map(f => f.code)).toEqual(['int b;']);
+    expect(profiles).toEqual(['bob']);
+  });
+
+  it('rates from the ratings read inside the transaction, not a stale copy', async () => {
+    seed('ACTIVE');
+    // another battle finishes between our read and our transaction
+    beforeTx = () => void (db.users.get('alice')!.rating = 1500);
+    await match.forfeitMatch('m1', 'bob', namespace);
+    const alice = db.players.find(p => p.userId === 'alice')!;
+    expect(alice.ratingBefore).toBe(1500);
+    expect(db.users.get('alice')!.rating).toBe(alice.ratingAfter);
+  });
+
+  it('finalize also rates from the ratings read inside the transaction', async () => {
+    seed('ACTIVE');
+    submit('alice', 'ACCEPTED');
+    submit('bob', 'WRONG_ANSWER', 3, 1);
+    beforeTx = () => void (db.users.get('bob')!.rating = 1600);
+    await match.finalizeMatchIfReady('m1', namespace);
+    const bob = db.players.find(p => p.userId === 'bob')!;
+    expect(bob.ratingBefore).toBe(1600);
+    expect(db.users.get('bob')!.rating).toBe(bob.ratingAfter);
   });
 
   it('a casual forfeit leaves ratings alone but still reports both players', async () => {

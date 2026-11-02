@@ -15,7 +15,7 @@ import { loadQuestion, toDisplayResults } from '../services/questions';
 import { recordSnapshot, recordTypingBatch } from '../services/typing';
 import type { BattleNamespace } from '../types';
 import { BATTLE_EVENT_CLASSES, battleEventLimiter, type EventClass, type EventRateLimiter } from './rateLimit';
-import { handleSpectate, isSpectatorRoom, tellSpectators } from './spectate';
+import { handleSpectate, handleUnspectate, isSpectatorRoom, tellSpectators } from './spectate';
 import { cachedParticipant, isOnline, judgeLimiter, parsePayload, rememberParticipant, safe, userRoom, type BattleSocket } from './context';
 
 export function registerBattleHandlers(namespace: BattleNamespace, limiter: EventRateLimiter = battleEventLimiter): void {
@@ -29,6 +29,7 @@ export function registerBattleHandlers(namespace: BattleNamespace, limiter: Even
     socket.on('battle:typing', limited('battle:typing', safe(socket, 'battle:typing', p => handleTyping(socket, userId, p))));
     socket.on('battle:snapshot', limited('battle:snapshot', safe(socket, 'battle:snapshot', p => handleSnapshot(socket, userId, p))));
     socket.on('battle:spectate', limited('battle:spectate', safe(socket, 'battle:spectate', p => handleSpectate(socket, p))));
+    socket.on('battle:unspectate', limited('battle:unspectate', safe(socket, 'battle:unspectate', p => handleUnspectate(socket, p))));
     socket.on('disconnect', () => limiter.forgetSocket(socket.id));
 
     // tell opponents in live matches that this player dropped

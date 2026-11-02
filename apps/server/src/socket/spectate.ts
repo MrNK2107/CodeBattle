@@ -55,15 +55,20 @@ interface RoomTarget {
   to(room: string): { emit(event: 'spectate:update', payload: SpectateUpdatePayload): unknown };
 }
 
-/** Records a player's live state and sends it to the match's spectators. */
+/**
+ * Records a player's live state and sends it to the match's spectators. Pass
+ * `remember: false` when the match is no longer ACTIVE, so a late judge result
+ * doesn't re-create live state that broadcastToMatch already forgot.
+ */
 export function tellSpectators(
   nsp: RoomTarget,
   matchId: string,
   userId: string,
   patch: Omit<SpectateUpdatePayload, 'matchId' | 'userId' | 'at'>,
   now: number = Date.now(),
+  opts: { remember?: boolean } = {},
 ): void {
-  remember(matchId, userId, patch);
+  if (opts.remember !== false) remember(matchId, userId, patch);
   nsp.to(spectatorRoom(matchId)).emit('spectate:update', { matchId, userId, ...patch, at: now });
 }
 
@@ -80,6 +85,13 @@ export async function handleSpectate(socket: BattleSocket, payload: unknown): Pr
   });
   if (!match) {
     socket.emit('error', { code: 'NOT_FOUND', message: 'Match not found' });
+    return;
+  }
+  // Friendly battles are private, and a battle still waiting for its players
+  // has nothing to watch yet: only the participants may open either.
+  const participant = match.players.some(p => p.userId === socket.data.userId);
+  if (!participant && (match.mode === 'FRIENDLY' || match.status === 'WAITING')) {
+    socket.emit('error', { code: 'FORBIDDEN', message: 'This battle is not open to spectators.' });
     return;
   }
 
@@ -116,6 +128,13 @@ export async function handleSpectate(socket: BattleSocket, payload: unknown): Pr
   });
 }
 
+/** Stops watching: the client sends battle:unspectate when the spectator view unmounts. */
+export async function handleUnspectate(socket: BattleSocket, payload: unknown): Promise<void> {
+  const data = parsePayload(socket, matchRefSchema, payload);
+  if (!data) return;
+  await socket.leave(spectatorRoom(data.matchId));
+}
+
 type LifecycleEvent = 'match:started' | 'match:cancelled' | 'match:deadline' | 'match:ended';
 
 /** Match lifecycle events go to the players' room and, separately, to its spectators. */
@@ -128,5 +147,9 @@ export function broadcastToMatch<E extends LifecycleEvent>(
   const emit = (room: string) => (namespace.to(room).emit as (e: string, p: unknown) => void)(event, payload);
   emit(matchId);
   emit(spectatorRoom(matchId));
-  if (event === 'match:ended' || event === 'match:cancelled') forgetLiveState(matchId);
+  if (event === 'match:ended' || event === 'match:cancelled') {
+    forgetLiveState(matchId);
+    // nothing more will be sent to this match's spectators; drop the room
+    namespace.in(spectatorRoom(matchId)).socketsLeave(spectatorRoom(matchId));
+  }
 }

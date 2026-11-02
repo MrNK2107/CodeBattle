@@ -32,16 +32,25 @@ function generate() {
   };
 }
 
+function readCredentials() {
+  const parsed = JSON.parse(readFileSync(credentialsFile, 'utf8'));
+  if (parsed.postgresPassword && parsed.nextAuthSecret) return parsed;
+  throw new Error(`${credentialsFile} is incomplete; delete .local-db/ and .local-pg/ to start over`);
+}
+
 /** Reads .local-db/credentials.json, creating it with fresh random values if it is missing. */
 export function loadLocalCredentials() {
-  if (existsSync(credentialsFile)) {
-    const parsed = JSON.parse(readFileSync(credentialsFile, 'utf8'));
-    if (parsed.postgresPassword && parsed.nextAuthSecret) return parsed;
-    throw new Error(`${credentialsFile} is incomplete; delete .local-db/ and .local-pg/ to start over`);
-  }
+  if (existsSync(credentialsFile)) return readCredentials();
   const creds = generate();
   mkdirSync(credentialsDir, { recursive: true });
-  writeFileSync(credentialsFile, JSON.stringify(creds, null, 2) + '\n', { mode: 0o600 });
+  try {
+    // 'wx' fails if another process (web and server starting together) created
+    // the file since the check above; read theirs so both share one secret.
+    writeFileSync(credentialsFile, JSON.stringify(creds, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+  } catch (err) {
+    if (err && err.code === 'EEXIST') return readCredentials();
+    throw err;
+  }
   console.log(`[local-db] generated local credentials in ${path.relative(root, credentialsFile)}`);
   return creds;
 }

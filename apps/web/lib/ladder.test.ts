@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { STEPS, TIERS, ladderMove, standingFor, tierDistribution } from './ladder';
+import { STEPS, TIERS, distributionFromCounts, ladderMove, standingFor, tierDistribution, tierRanges } from './ladder';
 
 describe('ladder', () => {
   it('a new player (1200) starts in Silver I, 50 points from Gold III', () => {
@@ -66,5 +66,22 @@ describe('ladder', () => {
     expect(dist.map(d => d.count)).toEqual([0, 2, 1, 0, 0, 0, 1]);
     expect(dist[1].share).toBeCloseTo(0.5);
     expect(tierDistribution([]).every(d => d.count === 0 && d.share === 0)).toBe(true);
+  });
+});
+
+describe('tier counts from the database', () => {
+  it('tierRanges cover the whole rating line without gaps', () => {
+    const ranges = tierRanges();
+    expect(ranges).toHaveLength(TIERS.length);
+    expect(ranges[0].gte).toBeUndefined();
+    expect(ranges[ranges.length - 1].lt).toBeUndefined();
+    for (let i = 1; i < ranges.length; i++) expect(ranges[i].gte).toBe(ranges[i - 1].lt);
+  });
+
+  it('distributionFromCounts matches tierDistribution', () => {
+    const ratings = [1200, 1210, 1300, 2100, 40];
+    const counts = tierRanges().map(r => ratings.filter(x => (r.gte === undefined || x >= r.gte) && (r.lt === undefined || x < r.lt)).length);
+    expect(distributionFromCounts(counts)).toEqual(tierDistribution(ratings));
+    expect(distributionFromCounts(TIERS.map(() => 0))).toEqual(tierDistribution([]));
   });
 });

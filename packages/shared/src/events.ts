@@ -211,6 +211,8 @@ export interface BattleClientToServerEvents {
   'battle:snapshot': (payload: SnapshotPayload) => void;
   /** watch a live battle: progress and verdicts only, no code */
   'battle:spectate': (payload: MatchRef) => void;
+  /** stop watching (sent when the spectator view unmounts) */
+  'battle:unspectate': (payload: MatchRef) => void;
   'practice:run': (payload: PracticePayload) => void;
   'practice:submit': (payload: PracticePayload) => void;
   'room:create': (payload: RoomCreatePayload) => void;

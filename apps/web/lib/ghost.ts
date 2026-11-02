@@ -8,9 +8,18 @@
 export interface GhostFrame {
   /** ms since the battle started */
   t: number;
-  code: string;
   language: string;
   submitted?: boolean;
+  /** non-blank lines in the snapshot */
+  lines: number;
+  /** trimmed length of the snapshot, drives the progress bar */
+  size: number;
+  /**
+   * The snapshot itself. Only present when the viewer may read it (they have an
+   * accepted practice attempt on the problem); otherwise the server strips it so
+   * a live ranked question's solution never reaches the browser.
+   */
+  code?: string;
 }
 
 export interface Ghost {
@@ -26,13 +35,15 @@ export interface Ghost {
   total: number;
   language: string | null;
   recordedAt: string;
+  /** true when the frames carry code (the viewer has solved this problem) */
+  codeUnlocked: boolean;
 }
 
 export type GhostPhase = 'waiting' | 'typing' | 'submitted';
 
 export interface GhostState {
   phase: GhostPhase;
-  /** latest snapshot at this moment, '' before the first one */
+  /** latest snapshot at this moment, '' before the first one or when the code is locked */
   code: string;
   lines: number;
   /** 0..1, the ghost's code size now against its final size */
@@ -46,16 +57,40 @@ export function countLines(code: string): number {
   return code.split('\n').filter(l => l.trim()).length;
 }
 
-/** Normalizes stored replay JSON into sorted frames, dropping malformed entries. */
+const finiteCount = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
+
+/**
+ * Normalizes stored replay JSON into sorted frames, dropping malformed entries.
+ * Accepts full snapshots ({ t, code }) and code-free timeline frames ({ t, lines, size }).
+ */
 export function parseFrames(raw: unknown): GhostFrame[] {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .filter(
-      (f): f is GhostFrame =>
-        !!f && typeof f === 'object' && typeof (f as GhostFrame).t === 'number' && Number.isFinite((f as GhostFrame).t) && typeof (f as GhostFrame).code === 'string',
-    )
-    .map(f => ({ t: Math.max(0, f.t), code: f.code, language: typeof f.language === 'string' ? f.language : 'unknown', submitted: f.submitted === true }))
-    .sort((a, b) => a.t - b.t);
+  const out: GhostFrame[] = [];
+  for (const f of raw) {
+    if (!f || typeof f !== 'object') continue;
+    const r = f as Record<string, unknown>;
+    if (typeof r.t !== 'number' || !Number.isFinite(r.t)) continue;
+    const base = { t: Math.max(0, r.t), language: typeof r.language === 'string' ? r.language : 'unknown', submitted: r.submitted === true };
+    if (typeof r.code === 'string') {
+      out.push({ ...base, code: r.code, lines: countLines(r.code), size: r.code.trim().length });
+    } else {
+      const lines = finiteCount(r.lines);
+      const size = finiteCount(r.size);
+      if (lines !== null && size !== null) out.push({ ...base, lines, size });
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/**
+ * The frames a viewer is allowed to receive. Without `includeCode` every
+ * snapshot is reduced to its timeline (time, line count, size, language), so
+ * the payload carries nothing that could be pasted into a battle.
+ */
+export function ghostFramesForViewer(raw: unknown, includeCode: boolean): GhostFrame[] {
+  const frames = parseFrames(raw);
+  if (includeCode) return frames;
+  return frames.map(({ code: _code, ...timeline }) => timeline);
 }
 
 /** Where the ghost is `elapsedMs` into the race. */
@@ -66,16 +101,17 @@ export function ghostStateAt(ghost: Pick<Ghost, 'frames' | 'submitAtMs'>, elapse
     if (f.t <= elapsedMs) current = f;
     else break;
   }
-  const finalCode = frames.length ? frames[frames.length - 1].code : '';
-  const finalSize = Math.max(1, finalCode.trim().length);
-  const code = current?.code ?? '';
+  const last = frames.length ? frames[frames.length - 1] : null;
+  const finalSize = Math.max(1, last?.size ?? 0);
   const submitted = ghost.submitAtMs !== null && elapsedMs >= ghost.submitAtMs;
   const phase: GhostPhase = submitted ? 'submitted' : current ? 'typing' : 'waiting';
+  // A submission that landed before any snapshot shows the final recording.
+  const shown = submitted && !current ? last : current;
   return {
     phase,
-    code: submitted && !code ? finalCode : code,
-    lines: countLines(submitted && !code ? finalCode : code),
-    progress: submitted ? 1 : Math.min(1, code.trim().length / finalSize),
+    code: shown?.code ?? '',
+    lines: shown?.lines ?? 0,
+    progress: submitted ? 1 : Math.min(1, (current?.size ?? 0) / finalSize),
     submitsInMs: ghost.submitAtMs !== null && !submitted ? ghost.submitAtMs - elapsedMs : null,
   };
 }

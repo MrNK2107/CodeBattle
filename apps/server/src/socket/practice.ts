@@ -56,15 +56,7 @@ async function handlePractice(socket: BattleSocket, userId: string, payload: unk
       kind === 'run'
         ? display
         : [...display.slice(0, question.visible.length), ...display.slice(question.visible.length).filter(r => !r.passed).slice(0, 1)];
-    socket.emit('practice:result', {
-      slug: question.slug,
-      kind,
-      verdict: result.verdict,
-      passed: result.passed,
-      total: result.total,
-      message: result.message,
-      results: shown,
-    });
+    // Persist first: the practice page reloads ghost code once an accepted attempt exists.
     if (kind === 'submit') {
       await prisma.practiceAttempt.create({
         data: {
@@ -78,6 +70,15 @@ async function handlePractice(socket: BattleSocket, userId: string, payload: unk
         },
       });
     }
+    socket.emit('practice:result', {
+      slug: question.slug,
+      kind,
+      verdict: result.verdict,
+      passed: result.passed,
+      total: result.total,
+      message: result.message,
+      results: shown,
+    });
   } finally {
     release();
   }

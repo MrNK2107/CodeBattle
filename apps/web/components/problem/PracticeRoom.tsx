@@ -2,6 +2,7 @@
 
 import type { Language, PracticeResultPayload } from '@codebattle/shared';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
 import { CodeWorkspace } from '@/components/editor/CodeWorkspace';
@@ -33,6 +34,13 @@ export function PracticeRoom({ question, solvedBefore, ghosts = [], ghost = null
   const [raceSolvedAt, setRaceSolvedAt] = useState<number | null>(null);
   const raceStartRef = useRef<number | null>(null);
   raceStartRef.current = raceStart;
+  const router = useRouter();
+  // Ghost code is only sent once you have an accepted attempt; after your first
+  // accept, re-render the server page so it arrives.
+  const ghostLocked = ghost !== null && !ghost.codeUnlocked;
+  useEffect(() => {
+    if (solved && !solvedBefore && ghostLocked) router.refresh();
+  }, [solved, solvedBefore, ghostLocked, router]);
 
   useEffect(() => {
     let off: (() => void) | undefined;

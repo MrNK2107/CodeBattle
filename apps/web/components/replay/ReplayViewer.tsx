@@ -3,14 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { formatClock } from '@/lib/format';
+import type { GhostFrame } from '@/lib/ghost';
 import { changeCount, markChangedLines } from '@/lib/lineDiff';
 
-export interface ReplayFrame {
-  t: number;
-  code: string;
-  language: string;
-  submitted?: boolean;
-}
+/** A snapshot; `code` is absent for viewers who did not play the battle. */
+export type ReplayFrame = GhostFrame;
 
 interface ReplayTrack {
   name: string;
@@ -33,7 +30,16 @@ function frameIndexAt(frames: ReplayFrame[], t: number): number {
   return found;
 }
 
-export function ReplayViewer({ tracks, durationMs }: { tracks: [ReplayTrack, ReplayTrack]; durationMs: number }): JSX.Element {
+export function ReplayViewer({
+  tracks,
+  durationMs,
+  codeVisible = true,
+}: {
+  tracks: [ReplayTrack, ReplayTrack];
+  durationMs: number;
+  /** false for viewers who did not play: the frames carry no code, show the timeline only */
+  codeVisible?: boolean;
+}): JSX.Element {
   const sorted = useMemo(() => tracks.map(tr => ({ ...tr, frames: [...tr.frames].sort((a, b) => a.t - b.t) })), [tracks]);
   const end = Math.max(durationMs, ...sorted.flatMap(tr => tr.frames.map(f => f.t)), 1000);
   const [t, setT] = useState(0);
@@ -151,11 +157,29 @@ export function ReplayViewer({ tracks, durationMs }: { tracks: [ReplayTrack, Rep
         ))}
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {sorted.map((tr, i) => (
-          <TrackPane key={tr.name} track={tr} t={t} side={i === 0 ? 'you' : 'rival'} />
-        ))}
-      </div>
+      {codeVisible ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {sorted.map((tr, i) => (
+            <TrackPane key={tr.name} track={tr} t={t} side={i === 0 ? 'you' : 'rival'} />
+          ))}
+        </div>
+      ) : (
+        <section className="panel space-y-2 p-4 text-sm text-muted" aria-label="Progress">
+          <p>The code in this battle is shown only to the two players, because the question is still in the ranked pool.</p>
+          <ul className="space-y-1">
+            {sorted.map(tr => {
+              const index = frameIndexAt(tr.frames, t);
+              const frame = index >= 0 ? tr.frames[index] : null;
+              return (
+                <li key={tr.name} className="tabular-nums">
+                  <span className="font-semibold text-text">{tr.name}</span>:{' '}
+                  {frame ? `${frame.lines} ${frame.lines === 1 ? 'line' : 'lines'} of ${frame.language}${frame.submitted ? ', submitted' : ''}` : 'not started yet'}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
@@ -163,10 +187,10 @@ export function ReplayViewer({ tracks, durationMs }: { tracks: [ReplayTrack, Rep
 function TrackPane({ track, t, side }: { track: ReplayTrack; t: number; side: 'you' | 'rival' }): JSX.Element {
   const index = frameIndexAt(track.frames, t);
   const frame = index >= 0 ? track.frames[index] : null;
-  const prev = index > 0 ? track.frames[index - 1].code : '';
-  const marks = useMemo(() => (frame ? markChangedLines(prev, frame.code) : []), [prev, frame]);
+  const prev = index > 0 ? (track.frames[index - 1].code ?? '') : '';
+  const marks = useMemo(() => (frame ? markChangedLines(prev, frame.code ?? '') : []), [prev, frame]);
   const changed = changeCount(marks);
-  const lines = frame ? frame.code.split('\n') : [];
+  const lines = frame ? (frame.code ?? '').split('\n') : [];
   const tint = side === 'you' ? 'bg-you/10 border-l-you' : 'bg-rival/10 border-l-rival';
 
   return (

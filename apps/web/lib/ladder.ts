@@ -126,3 +126,18 @@ export function tierDistribution(ratings: number[]): Array<{ tier: TierDef; coun
   const total = ratings.length || 1;
   return TIERS.map(tier => ({ tier, count: counts.get(tier.id) ?? 0, share: (counts.get(tier.id) ?? 0) / total }));
 }
+
+/** Rating range of each tier, in ladder order, for counting players with indexed queries. */
+export function tierRanges(): Array<{ tier: TierDef; gte?: number; lt?: number }> {
+  return TIERS.map((tier, i) => ({
+    tier,
+    gte: i === 0 ? undefined : tier.floor,
+    lt: i + 1 < TIERS.length ? TIERS[i + 1].floor : undefined,
+  }));
+}
+
+/** tierDistribution from per-tier counts (in TIERS order) instead of every rating. */
+export function distributionFromCounts(counts: number[]): Array<{ tier: TierDef; count: number; share: number }> {
+  const total = counts.reduce((a, b) => a + b, 0) || 1;
+  return TIERS.map((tier, i) => ({ tier, count: counts[i] ?? 0, share: (counts[i] ?? 0) / total }));
+}

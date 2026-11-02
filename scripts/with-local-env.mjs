@@ -31,9 +31,16 @@ const localEnv = {
   DEV_LOGIN: '1',
 };
 
-const child = spawn(cmd, args, {
+// shell: true on every platform. The commands come from our own package.json
+// scripts and several are compound ("prisma migrate deploy && tsx ..."), which
+// only a shell can run; without it spawn() fails with ENOENT on Linux/macOS.
+const child = spawn([cmd, ...args].join(' '), {
   stdio: 'inherit',
-  shell: process.platform === 'win32',
+  shell: true,
   env: { ...process.env, ...localEnv },
 });
-child.on('exit', code => process.exit(code ?? 1));
+child.on('error', err => {
+  console.error(`[with-local-env] failed to start "${cmd}": ${err.message}`);
+  process.exit(1);
+});
+child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));

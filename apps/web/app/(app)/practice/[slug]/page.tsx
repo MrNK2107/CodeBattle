@@ -2,7 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { PracticeRoom } from '@/components/problem/PracticeRoom';
 import { auth } from '@/lib/auth';
-import { loadGhosts } from '@/lib/ghostData';
+import { hasSolvedInPractice, loadGhosts } from '@/lib/ghostData';
 import { prisma } from '@/lib/prisma';
 import { toPublicQuestion, visibleTestsQuery } from '@/lib/questions';
 
@@ -30,10 +30,8 @@ export default async function PracticeProblemPage({
   });
   if (!question || !question.signature) notFound();
 
-  const [solved, ghosts] = await Promise.all([
-    prisma.practiceAttempt.count({ where: { userId, questionId: question.id, status: 'ACCEPTED' } }),
-    loadGhosts(question.id, userId),
-  ]);
+  // loadGhosts strips ghost code unless the viewer has solved the problem
+  const [solved, ghosts] = await Promise.all([hasSolvedInPractice(question.id, userId), loadGhosts(question.id, userId)]);
   const ghost = typeof searchParams.ghost === 'string' ? (ghosts.find(g => g.id === searchParams.ghost) ?? null) : null;
-  return <PracticeRoom key={ghost?.id ?? 'solo'} question={toPublicQuestion(question)} solvedBefore={solved > 0} ghosts={ghosts} ghost={ghost} />;
+  return <PracticeRoom key={ghost?.id ?? 'solo'} question={toPublicQuestion(question)} solvedBefore={solved} ghosts={ghosts} ghost={ghost} />;
 }

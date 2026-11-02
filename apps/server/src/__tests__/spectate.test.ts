@@ -35,16 +35,18 @@ vi.mock('../socket/context', async () => {
   };
 });
 
-const { handleSpectate, tellSpectators, broadcastToMatch, liveStateOf, forgetLiveState, spectatorRoom } = await import('../socket/spectate');
+const { handleSpectate, handleUnspectate, tellSpectators, broadcastToMatch, liveStateOf, forgetLiveState, spectatorRoom } = await import('../socket/spectate');
 
 type Emitted = { event: string; payload: any; room?: string };
 
-function spectator(watchers = 1) {
+function spectator(watchers = 1, userId = 'carol') {
   const emitted: Emitted[] = [];
   const rooms = new Set<string>();
   const socket = {
+    data: { userId },
     emit: (event: string, payload: unknown) => void emitted.push({ event, payload }),
     join: async (room: string) => void rooms.add(room),
+    leave: async (room: string) => void rooms.delete(room),
     nsp: { adapter: { rooms: new Map([[spectatorRoom('m1'), { size: watchers }]]) } },
   };
   return { socket: socket as never, emitted, rooms };
@@ -52,7 +54,15 @@ function spectator(watchers = 1) {
 
 function roomSink() {
   const emitted: Emitted[] = [];
-  return { emitted, nsp: { to: (room: string) => ({ emit: (event: string, payload: unknown) => void emitted.push({ event, payload, room }) }) } };
+  const left: string[] = [];
+  return {
+    emitted,
+    left,
+    nsp: {
+      to: (room: string) => ({ emit: (event: string, payload: unknown) => void emitted.push({ event, payload, room }) }),
+      in: (room: string) => ({ socketsLeave: (r: string) => void left.push(`${room}->${r}`) }),
+    },
+  };
 }
 
 beforeEach(() => {
@@ -120,7 +130,49 @@ describe('handleSpectate', () => {
   });
 });
 
+describe('who may watch', () => {
+  it('a friendly battle is private: outsiders are refused and join nothing', async () => {
+    db.match!.mode = 'FRIENDLY';
+    const s = spectator();
+    await handleSpectate(s.socket, { matchId: 'm1' });
+    expect(s.rooms.size).toBe(0);
+    expect(s.emitted).toEqual([{ event: 'error', payload: { code: 'FORBIDDEN', message: expect.any(String) } }]);
+  });
+
+  it('a ranked battle still waiting for its players cannot be watched by outsiders', async () => {
+    db.match!.status = 'WAITING';
+    const s = spectator();
+    await handleSpectate(s.socket, { matchId: 'm1' });
+    expect(s.rooms.size).toBe(0);
+    expect(s.emitted[0].payload.code).toBe('FORBIDDEN');
+  });
+
+  it('a participant may watch their own friendly or waiting battle', async () => {
+    db.match!.mode = 'FRIENDLY';
+    db.match!.status = 'WAITING';
+    const s = spectator(1, 'alice');
+    await handleSpectate(s.socket, { matchId: 'm1' });
+    expect([...s.rooms]).toEqual(['watch:m1']);
+    expect(s.emitted[0].event).toBe('spectate:state');
+  });
+
+  it('battle:unspectate leaves the spectator room', async () => {
+    const s = spectator();
+    await handleSpectate(s.socket, { matchId: 'm1' });
+    expect(s.rooms.has('watch:m1')).toBe(true);
+    await handleUnspectate(s.socket, { matchId: 'm1' });
+    expect(s.rooms.size).toBe(0);
+  });
+});
+
 describe('tellSpectators', () => {
+  it('does not remember state for a match that is no longer active', () => {
+    const sink = roomSink();
+    tellSpectators(sink.nsp, 'm1', 'alice', { status: 'submitted' }, 1000, { remember: false });
+    expect(liveStateOf('m1', 'alice')).toBeUndefined();
+    expect(sink.emitted).toHaveLength(1);
+  });
+
   it('sends only to the spectator room and merges live state', () => {
     const sink = roomSink();
     tellSpectators(sink.nsp, 'm1', 'alice', { status: 'running' }, 1000);
@@ -148,5 +200,12 @@ describe('broadcastToMatch', () => {
       'match:ended@watch:m1',
     ]);
     expect(liveStateOf('m1', 'alice')).toBeUndefined();
+    expect(sink.left).toEqual(['watch:m1->watch:m1']);
+  });
+
+  it('empties the spectator room when a match is cancelled', () => {
+    const sink = roomSink();
+    broadcastToMatch(sink.nsp as unknown as BattleNamespace, 'm1', 'match:cancelled', { matchId: 'm1', reason: 'x' } as never);
+    expect(sink.left).toEqual(['watch:m1->watch:m1']);
   });
 });

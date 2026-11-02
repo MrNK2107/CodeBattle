@@ -26,7 +26,7 @@ const userRoom = (userId: string) => `user:${userId}`;
 export async function processSubmission(namespace: BattleNamespace, data: SubmissionJobData): Promise<void> {
   const submission = await prisma.submission.findUnique({
     where: { id: data.submissionId },
-    include: { match: { select: { questionId: true } } },
+    include: { match: { select: { questionId: true, status: true } } },
   });
   if (!submission || submission.status !== 'PENDING') return;
   const question = await loadQuestion({ id: submission.match.questionId });
@@ -69,7 +69,7 @@ export async function processSubmission(namespace: BattleNamespace, data: Submis
     verdict: result.verdict,
     hiddenPassed: result.passed,
     hiddenTotal: result.total,
-  });
+  }, Date.now(), { remember: submission.match.status === 'ACTIVE' });
 
   await handleJudgedSubmission(submission.matchId, submission.userId, result.verdict === 'ACCEPTED', namespace);
 }

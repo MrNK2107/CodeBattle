@@ -8,11 +8,28 @@ export const COLLEGE_TOP_N = 5;
 /** Colleges with fewer ranked players than this are listed as "forming", not ranked. */
 export const COLLEGE_MIN_PLAYERS = 3;
 
+// Names are self-declared, so they are restricted to Latin script: after NFKD
+// folding ("Université" -> "Universite", fullwidth "ＩＩＴ" -> "IIT") only ASCII
+// letters, digits, spaces and . , & ( ) ' - may remain. That rules out
+// homoglyph look-alikes such as "IIT Mаdras" with a Cyrillic "а".
+const LATIN_NAME = /^[A-Za-z0-9 .,&()'-]*$/;
+const ASCII_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** NFKD-folds a name and drops combining marks, leaving plain letters. */
+function foldCollege(raw: string): string {
+  return raw.normalize('NFKD').replace(/\p{M}/gu, '');
+}
+
+/** True when the name is Latin script only (accents allowed). */
+export function isLatinCollegeName(raw: string): boolean {
+  return LATIN_NAME.test(foldCollege(raw));
+}
+
 export const collegeSchema = z
   .string()
   .trim()
   .max(60, 'Keep the college or club name under 60 characters')
-  .regex(/^[\p{L}\p{N} .,&()'-]*$/u, 'Use letters, numbers, spaces and . , & ( ) \' - only')
+  .refine(isLatinCollegeName, "Use Latin letters, numbers, spaces and . , & ( ) ' - only")
   .optional()
   .or(z.literal(''));
 
@@ -22,18 +39,28 @@ export function normalizeCollege(raw: string | null | undefined): string | null 
   return name ? name.slice(0, 60) : null;
 }
 
-/** URL-safe grouping key: "IIT (Madras)" and "iit madras" both become "iit-madras". */
+/**
+ * ASCII grouping key: "IIT (Madras)" and "iit madras" both become "iit-madras".
+ * Null for an empty name or one that is not Latin script, so a look-alike can
+ * never join (or impersonate) a real college.
+ */
 export function collegeSlug(raw: string | null | undefined): string | null {
   const name = normalizeCollege(raw);
-  if (!name) return null;
-  const slug = name
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+  if (!name || !isLatinCollegeName(name)) return null;
+  const slug = foldCollege(name)
     .toLowerCase()
     .replace(/&/g, ' and ')
-    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return slug || null;
+}
+
+/** Accepts only a well-formed ASCII slug (e.g. from ?college=), else null. */
+export function parseCollegeSlug(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim().toLowerCase().slice(0, 80);
+  if (ASCII_SLUG.test(v)) return v;
+  return collegeSlug(v);
 }
 
 export interface CollegeMember {
@@ -70,7 +97,8 @@ export function rankColleges(members: CollegeMember[], opts: { topN?: number; mi
   const minPlayers = opts.minPlayers ?? COLLEGE_MIN_PLAYERS;
   const groups = new Map<string, CollegeMember[]>();
   for (const m of members) {
-    const slug = m.collegeSlug ?? collegeSlug(m.college);
+    // trust a stored slug only if it is a clean ASCII one; otherwise re-derive it (null for non-Latin names)
+    const slug = m.collegeSlug && ASCII_SLUG.test(m.collegeSlug) && isLatinCollegeName(m.college ?? '') ? m.collegeSlug : collegeSlug(m.college);
     if (!slug || m.totalMatches <= 0) continue;
     const list = groups.get(slug) ?? [];
     list.push(m);
@@ -102,4 +130,36 @@ export function rankColleges(members: CollegeMember[], opts: { topN?: number; mi
   return rows.sort(
     (a, b) => Number(b.ranked) - Number(a.ranked) || b.score - a.score || b.players - a.players || a.name.localeCompare(b.name),
   );
+}
+
+/** One college as aggregated by the database (see lib/leaderboardData.ts). */
+export interface CollegeAggregate {
+  slug: string;
+  /** most common spelling */
+  name: string;
+  players: number;
+  /** average of the top COLLEGE_TOP_N ratings, rounded */
+  score: number;
+  wins: number;
+  battles: number;
+  topUsername: string;
+  topRating: number;
+}
+
+/** Same ordering and shape as rankColleges, from pre-aggregated rows. */
+export function collegeRowsFromAggregates(aggs: CollegeAggregate[], opts: { minPlayers?: number } = {}): CollegeRow[] {
+  const minPlayers = opts.minPlayers ?? COLLEGE_MIN_PLAYERS;
+  return aggs
+    .filter(a => ASCII_SLUG.test(a.slug) && a.players > 0)
+    .map(a => ({
+      slug: a.slug,
+      name: a.name,
+      players: a.players,
+      score: a.score,
+      wins: a.wins,
+      battles: a.battles,
+      top: { username: a.topUsername, rating: a.topRating },
+      ranked: a.players >= minPlayers,
+    }))
+    .sort((a, b) => Number(b.ranked) - Number(a.ranked) || b.score - a.score || b.players - a.players || a.name.localeCompare(b.name));
 }
