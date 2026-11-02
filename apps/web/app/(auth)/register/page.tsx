@@ -1,129 +1,118 @@
 "use client";
 
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { signIn } from "next-auth/react";
-import { FormEvent, useState } from "react";
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { signIn } from 'next-auth/react';
+import { FormEvent, Suspense, useState } from 'react';
 
-export default function RegisterPage(): JSX.Element {
+import { safeCallback } from '@/lib/callback';
+
+function RegisterForm(): JSX.Element {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/app";
-
-  const [isLoading, setIsLoading] = useState(false);
+  const callbackUrl = safeCallback(searchParams.get('callbackUrl'));
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsLoading(true);
+    setLoading(true);
     setError(null);
+    const data = new FormData(event.currentTarget);
+    const username = String(data.get('username') ?? '').trim();
+    const email = String(data.get('email') ?? '').trim();
+    const password = String(data.get('password') ?? '');
+    const college = String(data.get('college') ?? '').trim();
 
-    const formData = new FormData(event.currentTarget);
-    const name = String(formData.get("name") ?? "");
-    const email = String(formData.get("email") ?? "");
-    const password = String(formData.get("password") ?? "");
-
-    const response = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password }),
-    });
-
-    if (!response.ok) {
-      const payload = await response.json();
-      setError(payload?.error ?? "Unable to sign up");
-      setIsLoading(false);
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password, college }),
+    }).catch(() => null);
+    if (!response || !response.ok) {
+      const payload = (await response?.json().catch(() => null)) as { error?: string } | null;
+      setError(payload?.error ?? 'Could not create the account. Check your connection and try again.');
+      setLoading(false);
       return;
     }
 
-    const result = await signIn("credentials", {
-      redirect: false,
-      email,
-      password,
-      callbackUrl,
-    });
-
-    if (result?.error) {
-      setError("Registered, but sign-in failed. Try signing in manually.");
-      setIsLoading(false);
+    const result = await signIn('credentials', { redirect: false, email, password, callbackUrl });
+    if (!result || result.error) {
+      setError('Your account was created, but signing in failed. Sign in with your new details.');
+      setLoading(false);
       return;
     }
-
-    window.location.href = result?.url ?? callbackUrl;
-  };
-
-  const handleOAuth = async (provider: "github" | "google") => {
-    setIsLoading(true);
-    await signIn(provider, { callbackUrl });
+    window.location.href = callbackUrl;
   };
 
   return (
-    <div className="max-w-md space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Create account</h1>
-        <p className="text-slate-400">Register with email/password or continue with OAuth.</p>
+    <div className="mx-auto max-w-sm space-y-6 pt-8">
+      <div className="space-y-1">
+        <p className="kicker">Step into the ring</p>
+        <h1 className="text-3xl font-semibold">Create an account</h1>
+        <p className="text-muted">You start at 1200, Silver I. Your username is shown to opponents.</p>
       </div>
-      <div className="grid gap-3">
-        <button
-          className="w-full rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:border-primary"
-          type="button"
-          disabled={isLoading}
-          onClick={() => handleOAuth("github")}
-        >
-          Continue with GitHub
-        </button>
-        <button
-          className="w-full rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:border-primary"
-          type="button"
-          disabled={isLoading}
-          onClick={() => handleOAuth("google")}
-        >
-          Continue with Google
-        </button>
-      </div>
-      <form className="space-y-4" onSubmit={handleSubmit}>
-        <div className="space-y-2">
-          <label className="block text-sm text-slate-300">Name</label>
+      <form className="space-y-4" onSubmit={submit}>
+        <div className="space-y-1.5">
+          <label className="block text-sm" htmlFor="username">
+            Username
+          </label>
           <input
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2"
-            type="text"
-            name="name"
+            id="username"
+            className="input"
+            name="username"
+            autoComplete="username"
             required
-            disabled={isLoading}
+            minLength={3}
+            maxLength={20}
+            pattern="[A-Za-z0-9_\-]+"
+            title="3–20 letters, numbers, - or _"
+            disabled={loading}
           />
+          <p className="text-xs text-faint">3–20 letters, numbers, dashes or underscores.</p>
         </div>
-        <div className="space-y-2">
-          <label className="block text-sm text-slate-300">Email</label>
-          <input
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2"
-            type="email"
-            name="email"
-            required
-            disabled={isLoading}
-          />
+        <div className="space-y-1.5">
+          <label className="block text-sm" htmlFor="email">
+            Email
+          </label>
+          <input id="email" className="input" type="email" name="email" autoComplete="email" required disabled={loading} />
         </div>
-        <div className="space-y-2">
-          <label className="block text-sm text-slate-300">Password</label>
-          <input
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2"
-            type="password"
-            name="password"
-            minLength={6}
-            required
-            disabled={isLoading}
-          />
+        <div className="space-y-1.5">
+          <label className="block text-sm" htmlFor="password">
+            Password
+          </label>
+          <input id="password" className="input" type="password" name="password" autoComplete="new-password" minLength={8} required disabled={loading} />
+          <p className="text-xs text-faint">At least 8 characters.</p>
         </div>
-        {error ? <p className="text-sm text-red-400">{error}</p> : null}
-        <button
-          className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-          type="submit"
-          disabled={isLoading}
-        >
-          {isLoading ? "Creating account..." : "Sign up"}
+        <div className="space-y-1.5">
+          <label className="block text-sm" htmlFor="college">
+            College or club <span className="text-faint">(optional)</span>
+          </label>
+          <input id="college" className="input" name="college" maxLength={60} placeholder="e.g. Anna University" disabled={loading} />
+          <p className="text-xs text-faint">Your ranked battles count toward its place on the college leaderboard.</p>
+        </div>
+        {error ? (
+          <p className="text-sm text-fail" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <button className="btn-primary w-full" type="submit" disabled={loading}>
+          {loading ? 'Creating account…' : 'Create account'}
         </button>
       </form>
-      <div className="text-sm text-slate-400">
-        Already have an account? <Link className="text-primary" href="/login">Sign in</Link>
-      </div>
+      <p className="text-sm text-muted">
+        Already have an account?{' '}
+        <Link className="link" href="/login">
+          Sign in
+        </Link>
+      </p>
     </div>
+  );
+}
+
+export default function RegisterPage(): JSX.Element {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
   );
 }

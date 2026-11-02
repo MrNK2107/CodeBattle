@@ -1,104 +1,145 @@
 "use client";
 
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { signIn } from "next-auth/react";
-import { FormEvent, useState } from "react";
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { getProviders, signIn } from 'next-auth/react';
+import { FormEvent, Suspense, useEffect, useState } from 'react';
 
-export default function LoginPage(): JSX.Element {
+import { safeCallback } from '@/lib/callback';
+
+type ProviderMap = Awaited<ReturnType<typeof getProviders>>;
+
+const ERRORS: Record<string, string> = {
+  CredentialsSignin: 'That email and password don’t match an account.',
+  OAuthAccountNotLinked: 'This email is already registered with a different sign-in method.',
+  SessionRequired: 'Sign in to continue.',
+};
+
+
+function LoginForm(): JSX.Element {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/app";
+  const callbackUrl = safeCallback(searchParams.get('callbackUrl'));
+  const initialError = searchParams.get('error');
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [providers, setProviders] = useState<ProviderMap>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(initialError ? ERRORS[initialError] ?? 'Sign-in failed. Try again.' : null);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setIsLoading(true);
-    setError(null);
+  useEffect(() => {
+    getProviders().then(setProviders).catch(() => setProviders(null));
+  }, []);
 
-    const formData = new FormData(event.currentTarget);
-    const email = String(formData.get("email") ?? "");
-    const password = String(formData.get("password") ?? "");
-
-    const result = await signIn("credentials", {
-      redirect: false,
-      email,
-      password,
-      callbackUrl,
-    });
-
-    if (result?.error) {
-      setError("Invalid email or password");
-      setIsLoading(false);
+  const finish = (result: Awaited<ReturnType<typeof signIn>>, message: string) => {
+    if (!result || result.error) {
+      setError(message);
+      setLoading(false);
       return;
     }
-
-    window.location.href = result?.url ?? callbackUrl;
+    window.location.href = callbackUrl;
   };
 
-  const handleOAuth = async (provider: "github" | "google") => {
-    setIsLoading(true);
-    await signIn(provider, { callbackUrl });
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    const data = new FormData(event.currentTarget);
+    const result = await signIn('credentials', {
+      redirect: false,
+      email: String(data.get('email') ?? ''),
+      password: String(data.get('password') ?? ''),
+      callbackUrl,
+    });
+    finish(result, ERRORS.CredentialsSignin);
   };
+
+  const devLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    const data = new FormData(event.currentTarget);
+    const result = await signIn('dev', { redirect: false, username: String(data.get('username') ?? ''), callbackUrl });
+    finish(result, 'Dev login failed.');
+  };
+
+  const oauth = (['github', 'google'] as const).filter(id => providers?.[id]);
 
   return (
-    <div className="max-w-md space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Sign in</h1>
-        <p className="text-slate-400">Authenticate with GitHub, Google, or email/password.</p>
+    <div className="mx-auto max-w-sm space-y-6 pt-8">
+      <div className="space-y-1">
+        <h1 className="text-3xl font-semibold">Sign in</h1>
+        <p className="text-muted">Your rating and battle history follow your account.</p>
       </div>
-      <div className="grid gap-3">
-        <button
-          className="w-full rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:border-primary"
-          type="button"
-          disabled={isLoading}
-          onClick={() => handleOAuth("github")}
-        >
-          Continue with GitHub
-        </button>
-        <button
-          className="w-full rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:border-primary"
-          type="button"
-          disabled={isLoading}
-          onClick={() => handleOAuth("google")}
-        >
-          Continue with Google
-        </button>
-      </div>
-      <form className="space-y-4" onSubmit={handleSubmit}>
-        <div className="space-y-2">
-          <label className="block text-sm text-slate-300">Email</label>
-          <input
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2"
-            type="email"
-            name="email"
-            required
-            disabled={isLoading}
-          />
+
+      {providers?.dev ? (
+        <form className="space-y-3 rounded-lg border border-you/40 bg-you/5 p-4" onSubmit={devLogin}>
+          <div>
+            <p className="font-semibold">Local dev login</p>
+            <p className="text-xs text-muted">Any username, no password. Only available when DEV_LOGIN=1 outside production.</p>
+          </div>
+          <div className="flex gap-2">
+            <input aria-label="Username" className="input" name="username" placeholder="alice" required disabled={loading} />
+            <button className="btn-primary shrink-0" disabled={loading} type="submit">
+              Enter
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {oauth.length ? (
+        <div className="grid gap-2">
+          {oauth.map(id => (
+            <button
+              key={id}
+              type="button"
+              className="btn-quiet w-full"
+              disabled={loading}
+              onClick={() => {
+                setLoading(true);
+                void signIn(id, { callbackUrl });
+              }}
+            >
+              Continue with {providers?.[id]?.name}
+            </button>
+          ))}
         </div>
-        <div className="space-y-2">
-          <label className="block text-sm text-slate-300">Password</label>
-          <input
-            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2"
-            type="password"
-            name="password"
-            required
-            disabled={isLoading}
-          />
+      ) : null}
+
+      <form className="space-y-4" onSubmit={submit}>
+        <div className="space-y-1.5">
+          <label className="block text-sm" htmlFor="email">
+            Email
+          </label>
+          <input id="email" className="input" type="email" name="email" autoComplete="email" required disabled={loading} />
         </div>
-        {error ? <p className="text-sm text-red-400">{error}</p> : null}
-        <button
-          className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-          type="submit"
-          disabled={isLoading}
-        >
-          {isLoading ? "Signing in..." : "Continue"}
+        <div className="space-y-1.5">
+          <label className="block text-sm" htmlFor="password">
+            Password
+          </label>
+          <input id="password" className="input" type="password" name="password" autoComplete="current-password" required disabled={loading} />
+        </div>
+        {error ? (
+          <p className="text-sm text-fail" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <button className="btn-primary w-full" type="submit" disabled={loading}>
+          {loading ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
-      <div className="text-sm text-slate-400">
-        New here? <Link className="text-primary" href="/register">Create an account</Link>
-      </div>
+      <p className="text-sm text-muted">
+        New here?{' '}
+        <Link className="link" href={`/register${callbackUrl !== '/app' ? `?callbackUrl=${encodeURIComponent(callbackUrl)}` : ''}`}>
+          Create an account
+        </Link>
+      </p>
     </div>
+  );
+}
+
+export default function LoginPage(): JSX.Element {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

@@ -18,6 +18,11 @@ enum Difficulty {
   HARD
 }
 
+enum MatchMode {
+  RANKED
+  FRIENDLY
+}
+
 enum MatchStatus {
   WAITING
   ACTIVE
@@ -46,6 +51,10 @@ model User {
   googleId        String?         @unique
   emailVerified   DateTime?
   rating          Int             @default(1200)
+  /// college or club the player represents, as they typed it ("IIT Madras")
+  college         String?
+  /// normalized key for grouping ("iit-madras")
+  collegeSlug     String?
   totalMatches    Int             @default(0)
   wins            Int             @default(0)
   losses          Int             @default(0)
@@ -54,10 +63,12 @@ model User {
   matches         MatchPlayer[]
   submissions     Submission[]
   typingProfiles  TypingProfile[]
+  practiceAttempts PracticeAttempt[]
   accounts        Account[]
   sessions        Session[]
 
   @@index([rating])
+  @@index([collegeSlug, rating])
 }
 
 model Question {
@@ -68,22 +79,32 @@ model Question {
   difficulty      Difficulty
   tags            String[]
   starterCode     Json
+  /// ProblemSignature from @codebattle/shared (function name, typed params, compare mode)
+  signature       Json?
+  constraints     String[]  @default([])
+  isActive        Boolean   @default(true)
   testCases       TestCase[]
   optimalBigO     String
   optimalSpace    String
   matches         Match[]
+  practiceAttempts PracticeAttempt[]
   createdAt       DateTime  @default(now())
 
-  @@index([difficulty])
+  @@index([difficulty, isActive])
 }
 
 model TestCase {
   id          String   @id @default(cuid())
   questionId  String
   question    Question @relation(fields: [questionId], references: [id])
+  /// JSON array of positional arguments
   input       String
+  /// JSON value (or {"$oneOf": [...]})
   expected    String
   isHidden    Boolean  @default(false)
+  position    Int      @default(0)
+  explanation String?
+  label       String?
 
   @@index([questionId, isHidden])
 }
@@ -93,8 +114,12 @@ model Match {
   questionId  String
   question    Question      @relation(fields: [questionId], references: [id])
   status      MatchStatus   @default(WAITING)
+  mode        MatchMode     @default(RANKED)
   startedAt   DateTime?
+  /// hard deadline; moves earlier when one player solves the problem
+  endsAt      DateTime?
   endedAt     DateTime?
+  endReason   String?
   winnerId    String?
   createdAt   DateTime      @default(now())
   players     MatchPlayer[]
@@ -112,6 +137,10 @@ model MatchPlayer {
   finalScore     Float?
   scoreBreakdown Json?
   isReady        Boolean  @default(false)
+  ratingBefore   Int?
+  ratingAfter    Int?
+  /// code snapshots [{t: ms since start, code, language}] for the replay view
+  replay         Json?
 
   @@unique([matchId, userId])
 }
@@ -127,13 +156,33 @@ model Submission {
   status      SubmissionStatus
   passedTests Int       @default(0)
   totalTests  Int
-  runtimeMs   Int?
+  runtimeMs   Float?
   memoryKb    Int?
+  /// per hidden test: {status, ms}
+  results     Json?
+  message     String?
+  qualityScore Float?
   submittedAt DateTime  @default(now())
 
-  @@index([matchId])
+  @@unique([matchId, userId])
   @@index([userId])
   @@index([status])
+}
+
+model PracticeAttempt {
+  id          String           @id @default(cuid())
+  userId      String
+  questionId  String
+  user        User             @relation(fields: [userId], references: [id])
+  question    Question         @relation(fields: [questionId], references: [id])
+  language    String
+  status      SubmissionStatus
+  passedTests Int
+  totalTests  Int
+  runtimeMs   Float?
+  createdAt   DateTime         @default(now())
+
+  @@index([userId, questionId])
 }
 
 model TypingProfile {

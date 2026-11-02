@@ -36,3 +36,17 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# local dev database / artifacts
+.local-pg/
+.local-db/
+*.tsbuildinfo
+screenshots/tmp/
+
+# local planning docs (owner asked to keep these uncommitted)
+DELIVERY_PLAN.md
+PROJECT_WALKTHROUGH.md
+codebattle_build_prompt.md
+
+# self-hosted monaco, copied from node_modules by scripts/copy-monaco.mjs
+apps/web/public/monaco

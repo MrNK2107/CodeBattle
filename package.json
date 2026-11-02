@@ -10,19 +10,29 @@
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo run build",
-    "lint": "turbo run lint",
     "test": "turbo run test",
-    "format": "turbo run format",
     "prisma:generate": "prisma generate",
     "prisma:db:push": "prisma db push",
     "prisma:migrate:dev": "prisma migrate dev",
-    "prisma:format": "prisma format"
+    "prisma:format": "prisma format",
+    "typecheck": "turbo run typecheck",
+    "db:local": "node scripts/local-db.mjs",
+    "db:local:setup": "node scripts/with-local-env.mjs \"prisma migrate deploy && tsx prisma/seed.ts\"",
+    "db:local:demo": "node scripts/with-local-env.mjs tsx prisma/seed-demo.ts",
+    "dev:server:local": "node scripts/with-local-env.mjs npm run dev -w @codebattle/server",
+    "dev:web:local": "node scripts/with-local-env.mjs npm run dev -w @codebattle/web",
+    "smoke:battle": "node scripts/with-local-env.mjs tsx scripts/smoke-battle.ts",
+    "prisma:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "5.14.0"
   },
   "devDependencies": {
+    "embedded-postgres": "^16.13.0-beta.16",
+    "playwright-core": "^1.49.1",
     "prisma": "5.14.0",
+    "socket.io-client": "^4.7.5",
+    "tsx": "^4.19.2",
     "turbo": "1.13.3",
     "typescript": "5.4.5"
   }

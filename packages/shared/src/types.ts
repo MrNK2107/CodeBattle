@@ -2,6 +2,7 @@ export type Difficulty = 'EASY' | 'MEDIUM' | 'HARD';
 export type QueueDifficulty = Difficulty | 'ANY';
 
 export type MatchStatus = 'WAITING' | 'ACTIVE' | 'COMPLETED' | 'ABANDONED';
+export type MatchMode = 'RANKED' | 'FRIENDLY';
 export type SubmissionStatus =
   | 'PENDING'
   | 'ACCEPTED'
@@ -9,6 +10,8 @@ export type SubmissionStatus =
   | 'TIME_LIMIT'
   | 'RUNTIME_ERROR'
   | 'COMPILE_ERROR';
+
+export type TestOutcomeStatus = 'passed' | 'wrong' | 'error' | 'timeout' | 'not_run';
 
 export interface UserSummary {
   id: string;
@@ -25,13 +28,26 @@ export interface QuestionSummary {
   tags: string[];
 }
 
+/** One test as shown to a player: inputs and values are pre-formatted for display. */
 export interface TestCaseResult {
+  index: number;
   input: string;
   expected: string;
-  output: string;
+  actual?: string;
+  status: TestOutcomeStatus;
   passed: boolean;
+  stdout?: string;
+  error?: string;
   runtimeMs?: number;
-  memoryKb?: number;
+}
+
+export interface RunResult {
+  verdict: Exclude<SubmissionStatus, 'PENDING'>;
+  passed: number;
+  total: number;
+  results: TestCaseResult[];
+  /** compile error / missing function */
+  message?: string;
 }
 
 export interface SubmissionResult {
@@ -42,6 +58,9 @@ export interface SubmissionResult {
   totalTests: number;
   runtimeMs?: number;
   memoryKb?: number;
+  message?: string;
+  /** first failing hidden test; only sent to the player who submitted */
+  failedTest?: TestCaseResult;
 }
 
 export interface ScoreBreakdown {
@@ -57,6 +76,8 @@ export interface FinalScore {
   userId: string;
   total: number;
   breakdown: ScoreBreakdown;
+  ratingBefore?: number;
+  ratingAfter?: number;
 }
 
 export interface TypingProfileMetrics {

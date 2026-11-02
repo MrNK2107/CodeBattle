@@ -1,48 +1,53 @@
-import { hash } from "bcryptjs";
-import { NextResponse } from "next/server";
-import { z } from "zod";
+import { registerSchema } from '@codebattle/shared';
+import { hash } from 'bcryptjs';
+import { NextResponse } from 'next/server';
 
-import { prisma } from "@/lib/prisma";
+import { collegeSchema, collegeSlug, normalizeCollege } from '@/lib/colleges';
+import { prisma } from '@/lib/prisma';
+import { clientIp, rateLimit } from '@/lib/rateLimit';
 
-const registerSchema = z.object({
-  name: z.string().min(1),
-  email: z.string().email(),
-  password: z.string().min(6),
-});
-
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<NextResponse> {
+  if (!rateLimit(`register:${clientIp(request.headers)}`, 10, 60 * 60 * 1000)) {
+    return NextResponse.json({ error: 'Too many sign-ups from this network. Try again later.' }, { status: 429 });
+  }
+  let body: unknown;
   try {
-    const body = await request.json();
-    const { name, email, password } = registerSchema.parse(body);
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+  }
+  const parsed = registerSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid input' }, { status: 400 });
+  }
+  const collegeInput = collegeSchema.safeParse((body as { college?: unknown }).college ?? '');
+  if (!collegeInput.success) {
+    return NextResponse.json({ error: collegeInput.error.issues[0]?.message ?? 'Invalid college name' }, { status: 400 });
+  }
+  const slug = collegeSlug(collegeInput.data);
+  const college = slug ? normalizeCollege(collegeInput.data) : null;
+  const email = parsed.data.email.toLowerCase();
+  const username = parsed.data.username;
 
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) {
-      return NextResponse.json({ error: "User already exists" }, { status: 400 });
-    }
+  const [emailTaken, usernameTaken] = await Promise.all([
+    prisma.user.findUnique({ where: { email }, select: { id: true } }),
+    prisma.user.findFirst({ where: { username: { equals: username, mode: 'insensitive' } }, select: { id: true } }),
+  ]);
+  if (emailTaken) return NextResponse.json({ error: 'An account with this email already exists. Sign in instead.' }, { status: 409 });
+  if (usernameTaken) return NextResponse.json({ error: 'That username is taken. Try another.' }, { status: 409 });
 
-    const passwordHash = await hash(password, 10);
-    const baseUsername = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") || "user";
-    const suffix = Math.floor(Math.random() * 10_000)
-      .toString()
-      .padStart(4, "0");
-    const username = `${baseUsername}-${suffix}`;
-
+  try {
     const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        passwordHash,
-        username,
-      },
+      data: { email, username, name: username, passwordHash: await hash(parsed.data.password, 12), college, collegeSlug: slug },
+      select: { id: true, username: true },
     });
-
-    return NextResponse.json({ id: user.id, email: user.email, name: user.name });
+    return NextResponse.json(user, { status: 201 });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      const message = error.issues[0]?.message ?? "Invalid input";
-      return NextResponse.json({ error: message }, { status: 400 });
+    // unique constraint raced another signup
+    if ((error as { code?: string }).code === 'P2002') {
+      return NextResponse.json({ error: 'That username or email was just taken. Try another.' }, { status: 409 });
     }
-
-    return NextResponse.json({ error: "Unable to register" }, { status: 500 });
+    console.error('register failed', error);
+    return NextResponse.json({ error: 'Could not create the account. Try again.' }, { status: 500 });
   }
 }

@@ -6,8 +6,94 @@
   color-scheme: dark;
 }
 
-body {
-  background: #0D1117;
-  color: #E5E7EB;
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+@layer base {
+  body {
+    @apply bg-ink font-sans text-text antialiased;
+    font-feature-settings: 'ss01', 'tnum';
+    /* arena lighting: a blue corner and an orange corner over a faint floor grid */
+    background-image:
+      radial-gradient(60rem 28rem at -10% -10%, rgba(56, 214, 245, 0.09), transparent 60%),
+      radial-gradient(60rem 28rem at 110% -10%, rgba(255, 143, 43, 0.08), transparent 60%),
+      linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+    background-size: auto, auto, 48px 48px, 48px 48px;
+    background-attachment: fixed;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight text-text;
+  }
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-you focus-visible:ring-offset-2 focus-visible:ring-offset-ink;
+  }
+  ::selection {
+    background: rgba(56, 214, 245, 0.35);
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-you text-ink shadow-[0_0_0_1px_rgba(56,214,245,0.4),0_8px_24px_-8px_rgba(56,214,245,0.6)] hover:bg-[#6fe2f8];
+  }
+  .btn-submit {
+    @apply btn bg-pass text-ink hover:bg-[#7eeba9];
+  }
+  .btn-quiet {
+    @apply btn border border-line text-text hover:border-muted hover:bg-raised;
+  }
+  .btn-danger {
+    @apply btn border border-fail/50 text-fail hover:bg-fail/10;
+  }
+  .panel {
+    @apply rounded-lg border border-line bg-panel/90;
+  }
+  /* small uppercase label above headings: "BLUE CORNER", "RANKED LADDER" */
+  .kicker {
+    @apply font-display text-[11px] font-semibold uppercase tracking-[0.18em] text-muted;
+  }
+  .stat-num {
+    @apply font-display font-bold tabular-nums leading-none;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-well px-2.5 py-0.5 text-xs text-muted;
+  }
+  /* the angled split between the two corners */
+  .vs-slash {
+    @apply pointer-events-none absolute inset-y-0 left-1/2 w-24 -translate-x-1/2 -skew-x-12 bg-gradient-to-r from-you/20 via-transparent to-rival/20;
+  }
+  .input {
+    @apply w-full rounded-md border border-line bg-well px-3 py-2 text-sm text-text placeholder:text-faint focus-visible:border-you disabled:opacity-60;
+  }
+  .link {
+    @apply text-you underline-offset-4 hover:underline;
+  }
+  .segmented {
+    @apply inline-flex rounded-md border border-line bg-well p-0.5;
+  }
+  .segmented > button {
+    @apply rounded px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-text disabled:cursor-not-allowed;
+  }
+  .segmented > button[aria-checked='true'],
+  .segmented > button[aria-selected='true'] {
+    @apply bg-raised text-text;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

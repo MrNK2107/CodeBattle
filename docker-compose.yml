@@ -1,41 +1,151 @@
-version: '3.8'
+# Full CodeBattle stack.
+#
+#   cp .env.example .env      # set NEXTAUTH_SECRET and POSTGRES_PASSWORD (both required)
+#   docker compose up -d --build
+#   open http://localhost:3000
+#
+# Submissions run in throwaway sandbox containers (CODE_RUNNER=docker) started
+# through the host's Docker socket. Access to that socket is root-equivalent on
+# the host, so on a shared machine prefer Judge0:
+#   docker compose --profile judge0 up -d   and set CODE_RUNNER=judge0
+# (Judge0 needs a host with cgroup v1 support; see its docs.)
+
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     environment:
       POSTGRES_DB: codebattle
       POSTGRES_USER: codebattle
-      POSTGRES_PASSWORD: codebattle
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codebattle -d codebattle"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+      # host networking for npm during the build avoids builder DNS failures on some Docker Desktop setups
+      network: host
+    environment:
+      NODE_ENV: production
+      # the entrypoint builds DATABASE_URL from these (scripts/database-url.mjs)
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: codebattle
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGDATABASE: codebattle
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env}
+      WEB_ORIGIN: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      CODE_RUNNER: ${CODE_RUNNER:-docker}
+      JUDGE0_URL: ${JUDGE0_URL:-http://judge0-server:2358}
+      JUDGE0_API_KEY: ${JUDGE0_API_KEY:-}
+      JUDGE_CONCURRENCY: ${JUDGE_CONCURRENCY:-4}
+      CPP_STACK_LIMIT_KB: ${CPP_STACK_LIMIT_KB:-262144}
+      # must not exceed the MAX_STACK_LIMIT of the Judge0 at JUDGE0_URL (the bundled one below uses the same variable)
+      JUDGE0_MAX_STACK_LIMIT_KB: ${JUDGE0_MAX_STACK_LIMIT_KB:-262144}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "6379:6379"
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      network: host
+      args:
+        NEXT_PUBLIC_SOCKET_URL: ${PUBLIC_SOCKET_URL:-http://localhost:4000}
+    environment:
+      # the entrypoint builds DATABASE_URL from these (scripts/database-url.mjs)
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: codebattle
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGDATABASE: codebattle
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env}
+      NEXTAUTH_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
 
   judge0-server:
-    image: judge0/judge0:1.13.0
-    ports:
-      - "2358:2358"
+    profiles: ["judge0"]
+    image: judge0/judge0:1.13.1
     environment:
-      REDIS_URL: redis://redis:6379
-      DATABASE_URL: postgresql://codebattle:codebattle@postgres:5432/judge0
-    depends_on:
-      - postgres
-      - redis
+      REDIS_HOST: judge0-redis
+      POSTGRES_HOST: judge0-db
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0
+      # lets C++ submissions ask for a 256 MB stack (Judge0 defaults to 128000 KB)
+      MAX_STACK_LIMIT: ${JUDGE0_MAX_STACK_LIMIT_KB:-262144}
+    privileged: true
+    depends_on: [judge0-db, judge0-redis]
+    restart: unless-stopped
 
   judge0-worker:
-    image: judge0/judge0:1.13.0
-    command: ["./scripts/run-workers"]
-    privileged: true
+    profiles: ["judge0"]
+    image: judge0/judge0:1.13.1
+    command: ["./scripts/workers"]
     environment:
-      REDIS_URL: redis://redis:6379
-      DATABASE_URL: postgresql://codebattle:codebattle@postgres:5432/judge0
-    depends_on:
-      - judge0-server
+      REDIS_HOST: judge0-redis
+      POSTGRES_HOST: judge0-db
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0
+      # lets C++ submissions ask for a 256 MB stack (Judge0 defaults to 128000 KB)
+      MAX_STACK_LIMIT: ${JUDGE0_MAX_STACK_LIMIT_KB:-262144}
+    privileged: true
+    depends_on: [judge0-db, judge0-redis]
+    restart: unless-stopped
+
+  judge0-db:
+    profiles: ["judge0"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0
+    volumes:
+      - judge0_db:/var/lib/postgresql/data
+
+  judge0-redis:
+    profiles: ["judge0"]
+    image: redis:7-alpine
 
 volumes:
   postgres_data:
+  redis_data:
+  judge0_db:
